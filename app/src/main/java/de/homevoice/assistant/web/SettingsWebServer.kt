@@ -2,6 +2,11 @@ package de.homevoice.assistant.web
 
 import android.content.Context
 import android.util.Log
+import de.homevoice.assistant.media.MediaSessions
+import de.homevoice.assistant.media.MusicPlayer
+import de.homevoice.assistant.media.PrefsSpotifyTokenStore
+import de.homevoice.assistant.media.SPOTIFY_PACKAGE
+import de.homevoice.assistant.media.YOUTUBE_MUSIC_PACKAGE
 import de.homevoice.assistant.service.ConversationController
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.settings.SettingsRepository
@@ -41,6 +46,9 @@ class SettingsWebServer(
     private val settings: SettingsRepository,
     private val photos: PhotoRepository,
     private val controller: ConversationController,
+    private val music: MusicPlayer,
+    private val mediaSessions: MediaSessions,
+    private val spotifyTokens: PrefsSpotifyTokenStore,
     val port: Int = 8080,
 ) {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
@@ -194,6 +202,24 @@ class SettingsWebServer(
                 }
                 Response.json(state())
             }
+            "GET /api/photos" -> Response.json(buildJsonObject {
+                put("photos", buildJsonArray {
+                    photos.listUploads().forEach { (name, faces) ->
+                        add(buildJsonObject { put("name", name); put("faces", faces) })
+                    }
+                })
+            })
+            "GET /api/photos/thumb" -> {
+                val bytes = photos.thumbnail(r.query["name"] ?: throw IllegalArgumentException("name fehlt"))
+                    ?: return Response.error(404, "Foto nicht gefunden")
+                Response(200, "image/jpeg", bytes)
+            }
+            "POST /api/photos/delete-one" -> {
+                if (!photos.deleteUpload(r.query["name"] ?: throw IllegalArgumentException("name fehlt"))) {
+                    return Response.error(404, "Foto nicht gefunden")
+                }
+                Response.json(state())
+            }
             "POST /api/photos/delete" -> {
                 photos.deleteUploads()
                 Response.json(state())
@@ -201,6 +227,28 @@ class SettingsWebServer(
             "POST /api/test-ha" -> {
                 val message = runBlocking { withContext(Dispatchers.Main) { controller.refreshHomeAssistantTools() } }
                 Response.json(buildJsonObject { put("result", message) })
+            }
+            "POST /api/spotify/authorize" ->
+                Response.json(buildJsonObject { put("url", music.spotify.authorizationUrl(SPOTIFY_REDIRECT_URI)) })
+            "POST /api/spotify/callback" -> {
+                val url = (json.parseToJsonElement(r.readBody()).jsonObject["url"] as? JsonPrimitive)?.content
+                    ?: throw IllegalArgumentException("url fehlt")
+                runBlocking {
+                    music.spotify.completeAuthorization(url, SPOTIFY_REDIRECT_URI)
+                    spotifyTokens.userName = music.spotify.displayName()
+                }
+                Response.json(state())
+            }
+            "POST /api/spotify/disconnect" -> {
+                music.spotify.disconnect()
+                spotifyTokens.userName = null
+                Response.json(state())
+            }
+            "POST /api/spotify/devices" -> {
+                val devices = runBlocking { music.spotify.devices() }
+                Response.json(buildJsonObject {
+                    put("devices", devices.joinToString { "${it.name} (${it.type})" }.ifEmpty { "keine" })
+                })
             }
             else -> Response.error(404, "Unbekannter Endpunkt")
         }
@@ -245,6 +293,13 @@ class SettingsWebServer(
                 put("homeAssistant", status.homeAssistant)
                 put("error", status.error)
                 put("wakePeak", controller.wakePeak)
+                put("spotifyConnected", music.spotify.isConnected)
+                put("spotifyUser", spotifyTokens.userName)
+                put("spotifyInstalled", music.isInstalled(SPOTIFY_PACKAGE))
+                put("youtubeMusicInstalled", music.isInstalled(YOUTUBE_MUSIC_PACKAGE))
+                put("mediaAccess", mediaSessions.hasAccess)
+                put("overlayAllowed", android.provider.Settings.canDrawOverlays(context))
+                put("redirectUri", SPOTIFY_REDIRECT_URI)
                 put("uploadedPhotos", photos.uploadedCount())
             }
         }
@@ -267,6 +322,8 @@ class SettingsWebServer(
 
     companion object {
         private const val TAG = "VoiceAssistant"
+        /** Spotify only allows plain HTTP for loopback addresses, so the user copies the final URL back. */
+        const val SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8080/spotify/callback"
         private const val MAX_PHOTO_BYTES = 40L * 1024 * 1024
         private val SECRETS = setOf("geminiApiKey", "haToken")
         private val READ_ONLY = setOf("customWakeModelPath", "photoTreeUri")

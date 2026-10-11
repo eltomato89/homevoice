@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
@@ -24,10 +25,12 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.homevoice.assistant.service.AssistantService
 import de.homevoice.assistant.settings.Settings
+import de.homevoice.assistant.slideshow.Photo
 import de.homevoice.assistant.ui.HomeScreen
 import de.homevoice.assistant.ui.SettingsScreen
 import de.homevoice.assistant.ui.theme.HomeVoiceTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.LocalTime
 
 class MainActivity : ComponentActivity() {
@@ -50,11 +53,13 @@ class MainActivity : ComponentActivity() {
                 val status by container.controller.status.collectAsStateWithLifecycle()
                 val timers by container.timerManager.timers.collectAsStateWithLifecycle()
                 val ringing by container.timerManager.ringing.collectAsStateWithLifecycle()
+                val nowPlaying by container.mediaSessions.nowPlaying.collectAsStateWithLifecycle()
+                val scope = rememberCoroutineScope()
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var rescan by remember { mutableStateOf(0) }
 
                 val photoVersion by container.photos.version.collectAsStateWithLifecycle()
-                val photos by produceState(emptyList<Uri>(), settings.photoTreeUri, rescan, photoVersion) {
+                val photos by produceState(emptyList<Photo>(), settings.photoTreeUri, rescan, photoVersion) {
                     value = container.photos.scan(settings.photoTreeUri)
                 }
                 LaunchedEffect(settings.photoTreeUri) {
@@ -98,6 +103,10 @@ class MainActivity : ComponentActivity() {
                         ringing = ringing,
                         night = night,
                         setupHint = setupHint(webUrl).takeIf { settings.geminiApiKey.isBlank() },
+                        nowPlaying = nowPlaying,
+                        onMediaAction = { action ->
+                            scope.launch { runCatching { container.music.control(action) } }
+                        },
                         onTap = { container.controller.toggle() },
                         onLongPress = { showSettings = true },
                     )
@@ -109,6 +118,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+        container.mediaSessions.start()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             AssistantService.start(this)
         } else {

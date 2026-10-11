@@ -1,6 +1,12 @@
 package de.homevoice.assistant
 
 import android.app.Application
+import android.content.Intent
+import de.homevoice.assistant.media.MediaSessions
+import de.homevoice.assistant.media.MusicPlayer
+import de.homevoice.assistant.media.PrefsSpotifyTokenStore
+import de.homevoice.assistant.media.SpotifyClient
+import de.homevoice.assistant.media.YouTubeMusicSearch
 import de.homevoice.assistant.service.ConversationController
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.slideshow.PhotoRepository
@@ -10,11 +16,13 @@ import de.homevoice.assistant.timer.PrefsTimerStore
 import de.homevoice.assistant.timer.TimerManager
 import de.homevoice.assistant.tools.ToolRegistry
 import de.homevoice.assistant.tools.conversationTools
+import de.homevoice.assistant.tools.musicTools
 import de.homevoice.assistant.tools.timerTools
 import de.homevoice.assistant.web.SettingsWebServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -27,6 +35,7 @@ class App : Application() {
         container = AppContainer(this)
         container.timerManager.restore()
         container.webServer.start()
+        container.scope.launch { container.photos.optimizeUploads() }
     }
 }
 
@@ -48,6 +57,7 @@ class AppContainer(app: Application) {
 
     val restHttp: OkHttpClient = baseHttp.newBuilder()
         .readTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.SECONDS) // backstop for event streams that never finish
         .build()
 
     lateinit var timerManager: TimerManager
@@ -63,11 +73,30 @@ class AppContainer(app: Application) {
 
     val tools = ToolRegistry()
 
+    val mediaSessions = MediaSessions(app)
+
+    val spotifyTokens = PrefsSpotifyTokenStore(app)
+
+    val music = MusicPlayer(
+        context = app,
+        settings = settings,
+        spotify = SpotifyClient(restHttp, { settings.current.spotifyClientId }, spotifyTokens),
+        youTubeMusic = YouTubeMusicSearch(restHttp),
+        sessions = mediaSessions,
+        bringToFront = {
+            app.startActivity(
+                Intent(app, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            )
+        },
+    )
+
     val controller = ConversationController(
         context = app,
         settingsRepository = settings,
         timers = timerManager,
         tools = tools,
+        media = mediaSessions,
         wsHttp = wsHttp,
         restHttp = restHttp,
         scope = scope,
@@ -75,10 +104,11 @@ class AppContainer(app: Application) {
 
     val photos = PhotoRepository(app)
 
-    val webServer = SettingsWebServer(app, settings, photos, controller)
+    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens)
 
     init {
         tools.setGroup("conversation", conversationTools { controller.requestEnd() })
         tools.setGroup("timer", timerTools(timerManager))
+        tools.setGroup("music", musicTools(music, mediaSessions, settings))
     }
 }

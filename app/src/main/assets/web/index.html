@@ -18,6 +18,12 @@
   section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
   h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; color: var(--accent); letter-spacing: .02em; }
   label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 13px; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 12px; }
+  .gallery figure { position: relative; margin: 0; aspect-ratio: 4 / 3; background: #0d1217; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gallery figcaption { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(0,0,0,.6); color: var(--text); }
+  .gallery .del { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.65); color: #fff; font-size: 18px; line-height: 30px; }
+  .gallery .del:hover { background: var(--err); }
   .meter { position: relative; height: 10px; background: #0d1217; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .meter div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
   .meter span { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--err); }
@@ -98,6 +104,34 @@
     </section>
 
     <section>
+      <h2>Musik</h2>
+      <div class="status" id="musicStatus"></div>
+      <div class="row">
+        <div><label>Standard-Dienst</label>
+          <select id="defaultMusicService"><option value="spotify">Spotify</option><option value="youtube_music">YouTube Music</option></select></div>
+        <div><label>Spotify-Gerätename (optional)</label><input id="spotifyDeviceName" type="text" placeholder="automatisch"></div>
+      </div>
+      <h2 style="margin-top:20px">Spotify verbinden</h2>
+      <ol class="hint" style="padding-left:18px; margin:0">
+        <li>Auf <a href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com/dashboard</a> eine App anlegen (Web API), als Redirect URI <code id="redirectUri"></code> eintragen und die Client-ID hier einfügen.</li>
+        <li>„Mit Spotify verbinden“ öffnet die Spotify-Anmeldung. Nach der Zustimmung landet der Browser auf einer Seite, die <b>nicht lädt</b> – das ist richtig so.</li>
+        <li>Die komplette Adresse aus der Adresszeile kopieren und unten einfügen.</li>
+      </ol>
+      <label>Client-ID</label>
+      <input id="spotifyClientId" type="text" autocomplete="off">
+      <div class="row" style="margin-top:12px">
+        <div style="flex:0 0 auto"><button class="secondary" id="spotifyConnect">Mit Spotify verbinden</button></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="spotifyDevices">Spotify-Geräte anzeigen</button></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="spotifyDisconnect">Trennen</button></div>
+      </div>
+      <label>Adresse nach der Anmeldung (http://127.0.0.1:8080/spotify/callback?code=…)</label>
+      <div class="row">
+        <div style="flex:1 1 400px"><input id="spotifyCallback" type="text" autocomplete="off"></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="spotifyFinish">Übernehmen</button></div>
+      </div>
+    </section>
+
+    <section>
       <h2>Home Assistant (MCP)</h2>
       <div class="status" id="haStatus"></div>
       <label>URL</label>
@@ -114,10 +148,11 @@
     <section>
       <h2>Diashow &amp; Anzeige</h2>
       <div class="status" id="photoStatus"></div>
+      <div class="gallery" id="gallery"></div>
       <label>Fotos hochladen</label>
       <input id="photos" type="file" accept="image/*" multiple>
       <div class="row" style="margin-top:12px">
-        <div style="flex:0 0 auto"><button class="secondary" id="deletePhotos">Hochgeladene Fotos löschen</button></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="deletePhotos">Alle hochgeladenen Fotos löschen</button></div>
       </div>
       <div class="row">
         <div><label>Bildwechsel (Sekunden)</label><input id="slideIntervalSeconds" type="number" min="5" max="3600"></div>
@@ -139,7 +174,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'wakeModel'];
+const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'wakeModel', 'defaultMusicService', 'spotifyDeviceName', 'spotifyClientId'];
 const NUMBER_INT = ['followUpSeconds', 'slideIntervalSeconds', 'nightStartHour', 'nightEndHour'];
 const NUMBER_FLOAT = ['wakeThreshold'];
 const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled'];
@@ -185,6 +220,14 @@ function render(data, fields = true) {
   $('wakePeakText').textContent = 'Spitze: ' + st.wakePeak.toFixed(2) + ' · Schwelle: ' + s.wakeThreshold.toFixed(2)
     + ' – Wake Word sagen und beobachten; liegt die Spitze knapp unter der Schwelle, Schwelle senken.';
   $('haStatus').textContent = st.homeAssistant;
+  $('redirectUri').textContent = st.redirectUri;
+  $('musicStatus').innerHTML = [
+    'Spotify: ' + (st.spotifyConnected ? '✓ verbunden' + (st.spotifyUser ? ' als ' + st.spotifyUser : '') : 'nicht verbunden')
+      + (st.spotifyInstalled ? '' : ' · <b>App nicht installiert</b>'),
+    'YouTube Music: ' + (st.youtubeMusicInstalled ? '✓ installiert' : 'nicht installiert'),
+    'Mediensteuerung (Benachrichtigungszugriff): ' + (st.mediaAccess ? '✓' : '<b>fehlt</b> – auf dem Gerät erlauben'),
+    'Zurück zur Uhr nach App-Start (Overlay-Recht): ' + (st.overlayAllowed ? '✓' : '<b>fehlt</b>'),
+  ].join('<br>');
   $('photoStatus').textContent = st.uploadedPhotos + ' hochgeladene Fotos'
     + (s.photoTreeUri ? ' · zusätzlich Ordner auf dem Gerät' : '');
 }
@@ -224,6 +267,7 @@ async function load() {
   try {
     render(await api('GET', '/api/settings'));
     $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+    loadGallery(true).catch(() => {});
   } catch (e) { if (!$('app').classList.contains('hidden')) msg(e.message, 'err'); }
 }
 
@@ -247,16 +291,72 @@ $('wakeUpload').onchange = e => run($('wakeUpload'), async () => {
   e.target.value = '';
   msg('Modell hochgeladen und aktiviert ✓', 'ok');
 });
+$('spotifyConnect').onclick = () => run($('spotifyConnect'), async () => {
+  await save();
+  const r = await api('POST', '/api/spotify/authorize');
+  window.open(r.url, '_blank');
+  msg('Spotify-Anmeldung geöffnet – danach die Adresse unten einfügen');
+});
+$('spotifyFinish').onclick = () => run($('spotifyFinish'), async () => {
+  render(await api('POST', '/api/spotify/callback', { url: $('spotifyCallback').value.trim() }), false);
+  $('spotifyCallback').value = '';
+  msg('Spotify verbunden ✓', 'ok');
+});
+$('spotifyDisconnect').onclick = () => run($('spotifyDisconnect'), async () => { render(await api('POST', '/api/spotify/disconnect'), false); msg('Spotify getrennt', 'ok'); });
+$('spotifyDevices').onclick = () => run($('spotifyDevices'), async () => { const r = await api('POST', '/api/spotify/devices'); msg('Spotify-Geräte: ' + r.devices); });
+// ---- Photo gallery: thumbnails need the PIN header, so they are fetched and shown as blob URLs.
+let galleryNames = '';
+async function loadGallery(force) {
+  const r = await api('GET', '/api/photos');
+  const names = r.photos.map(p => p.name).join('|');
+  if (!force && names === galleryNames) return;
+  galleryNames = names;
+  const g = $('gallery');
+  g.querySelectorAll('img').forEach(img => URL.revokeObjectURL(img.src));
+  g.innerHTML = '';
+  for (const p of r.photos) {
+    const fig = document.createElement('figure');
+    const img = document.createElement('img');
+    img.alt = p.name;
+    const cap = document.createElement('figcaption');
+    cap.textContent = p.faces === 1 ? '1 Gesicht' : p.faces + ' Gesichter';
+    const del = document.createElement('button');
+    del.className = 'del'; del.title = 'Foto löschen'; del.textContent = '×';
+    del.onclick = () => run(del, async () => {
+      if (!confirm('Foto „' + p.name + '“ löschen?')) return;
+      render(await api('POST', '/api/photos/delete-one?name=' + encodeURIComponent(p.name)), false);
+      await loadGallery(true);
+      msg('Foto gelöscht', 'ok');
+    });
+    fig.append(img, cap, del);
+    g.append(fig);
+  }
+  // Load previews one after another so the small device is not flooded.
+  for (const fig of g.querySelectorAll('figure')) {
+    const img = fig.querySelector('img');
+    try {
+      const res = await fetch('/api/photos/thumb?name=' + encodeURIComponent(img.alt), { headers: { 'X-Pin': pin } });
+      if (res.ok) img.src = URL.createObjectURL(await res.blob());
+    } catch (e) {}
+  }
+}
+
 $('photos').onchange = e => run($('photos'), async () => {
   const files = Array.from(e.target.files);
   for (let i = 0; i < files.length; i++) {
     msg('Lade Foto ' + (i + 1) + ' von ' + files.length + '…');
     render(await upload('/api/photos', files[i]), false);
   }
+  await loadGallery(true);
   e.target.value = '';
   msg(files.length + ' Fotos hochgeladen ✓', 'ok');
 });
-$('deletePhotos').onclick = () => run($('deletePhotos'), async () => { render(await api('POST', '/api/photos/delete'), false); msg('Fotos gelöscht', 'ok'); });
+$('deletePhotos').onclick = () => run($('deletePhotos'), async () => {
+  if (!confirm('Wirklich alle hochgeladenen Fotos löschen?')) return;
+  render(await api('POST', '/api/photos/delete'), false);
+  await loadGallery(true);
+  msg('Fotos gelöscht', 'ok');
+});
 
 if (pin) load(); else showLogin();
 setInterval(() => { if (!$('app').classList.contains('hidden')) api('GET', '/api/settings').then(d => render(d, false)).catch(() => {}); }, 1000);

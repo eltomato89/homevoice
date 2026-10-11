@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.EaseInOutSine
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -12,6 +13,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +37,9 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isUnspecified
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
@@ -45,26 +50,34 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.imageLoader
 import coil.request.ImageRequest
+import coil.size.Scale
+import de.homevoice.assistant.media.NowPlaying
 import de.homevoice.assistant.service.AssistantState
 import de.homevoice.assistant.service.AssistantStatus
 import de.homevoice.assistant.settings.Settings
+import de.homevoice.assistant.slideshow.Photo
 import de.homevoice.assistant.timer.TimerEntry
 import de.homevoice.assistant.ui.theme.Palette
+import de.homevoice.vision.Shot
+import de.homevoice.vision.ShotPlanner
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** UI scale relative to a 600 dp tall tablet; ~0.66 on an Echo Show 5. */
+/** UI scale relative to a 420 dp tall screen; ~0.94 on an Echo Show 5 (5", read from across the room). */
 private val LocalUiScale = staticCompositionLocalOf { 1f }
 
 private val Number.sdp: Dp @Composable get() = (toFloat() * LocalUiScale.current).dp
@@ -74,17 +87,19 @@ private val Number.ssp: TextUnit @Composable get() = (toFloat() * LocalUiScale.c
 fun HomeScreen(
     settings: Settings,
     status: AssistantStatus,
-    photos: List<Uri>,
+    photos: List<Photo>,
     timers: List<TimerEntry>,
     ringing: List<TimerEntry>,
     night: Boolean,
     setupHint: String?,
+    nowPlaying: NowPlaying?,
+    onMediaAction: (String) -> Unit,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
-    val scale = (LocalConfiguration.current.screenHeightDp / 600f).coerceIn(0.6f, 1.4f)
+    val scale = (LocalConfiguration.current.screenHeightDp / 420f).coerceIn(0.8f, 1.5f)
     CompositionLocalProvider(LocalUiScale provides scale) {
-        HomeContent(settings, status, photos, timers, ringing, night, setupHint, onTap, onLongPress)
+        HomeContent(settings, status, photos, timers, ringing, night, setupHint, nowPlaying, onMediaAction, onTap, onLongPress)
     }
 }
 
@@ -92,11 +107,13 @@ fun HomeScreen(
 private fun HomeContent(
     settings: Settings,
     status: AssistantStatus,
-    photos: List<Uri>,
+    photos: List<Photo>,
     timers: List<TimerEntry>,
     ringing: List<TimerEntry>,
     night: Boolean,
     setupHint: String?,
+    nowPlaying: NowPlaying?,
+    onMediaAction: (String) -> Unit,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -155,6 +172,16 @@ private fun HomeContent(
 
         Transcript(status, modifier = Modifier.align(Alignment.Center).padding(horizontal = 64.sdp))
 
+        if (nowPlaying != null && !night) {
+            NowPlayingWidget(
+                now = nowPlaying,
+                onAction = onMediaAction,
+                unit = 16.sdp,
+                text = 18.ssp,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.sdp, bottom = 40.sdp),
+            )
+        }
+
         LightBar(status.state, modifier = Modifier.align(Alignment.BottomCenter))
 
         AnimatedVisibility(visible = ringing.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
@@ -164,7 +191,7 @@ private fun HomeContent(
 }
 
 @Composable
-private fun Slideshow(photos: List<Uri>, intervalSeconds: Int) {
+private fun Slideshow(photos: List<Photo>, intervalSeconds: Int) {
     val context = LocalContext.current
     val config = LocalConfiguration.current
     val density = LocalDensity.current
@@ -173,29 +200,43 @@ private fun Slideshow(photos: List<Uri>, intervalSeconds: Int) {
     val interval = intervalSeconds.coerceAtLeast(5) * 1000L
 
     var index by remember(photos) { mutableIntStateOf(0) }
-    fun request(uri: Uri) = ImageRequest.Builder(context).data(uri).size(widthPx, heightPx).build()
+    // FILL keeps the overflowing side at full resolution so panning stays sharp.
+    fun request(uri: Uri) = ImageRequest.Builder(context).data(uri).size(widthPx, heightPx).scale(Scale.FILL).build()
 
     LaunchedEffect(photos, interval) {
         while (true) {
             // Preload the next image so the crossfade does not show a black frame.
-            context.imageLoader.enqueue(request(photos[(index + 1) % photos.size]))
+            context.imageLoader.enqueue(request(photos[(index + 1) % photos.size].uri))
             delay(interval)
             index = (index + 1) % photos.size
         }
     }
 
-    Crossfade(targetState = photos[index % photos.size], animationSpec = tween(1500), label = "slideshow") { uri ->
-        val scale = remember(uri) { Animatable(1f) }
-        LaunchedEffect(uri) { scale.animateTo(1.08f, tween((interval + 1500).toInt(), easing = LinearEasing)) }
-        AsyncImage(
-            model = request(uri),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { scaleX = scale.value; scaleY = scale.value },
-        )
+    Crossfade(targetState = photos[index % photos.size], animationSpec = tween(1500), label = "slideshow") { photo ->
+        val painter = rememberAsyncImagePainter(request(photo.uri))
+        val progress = remember(photo) { Animatable(0f) }
+        LaunchedEffect(photo) {
+            progress.animateTo(1f, tween((interval + 1500).toInt(), easing = EaseInOutSine))
+        }
+        Canvas(Modifier.fillMaxSize()) {
+            val image = painter.intrinsicSize
+            if (image.isUnspecified || image.width <= 0f || image.height <= 0f) return@Canvas
+            val imageAspect = image.width / image.height
+            val viewAspect = size.width / size.height
+            // Ken Burns move planned around the detected faces (random direction per photo).
+            val shot = shotCache.getOrPut(photo) { ShotPlanner.plan(imageAspect, viewAspect, photo.faces) }
+            val window = shot.window(progress.value, imageAspect, viewAspect)
+            val scale = size.width / (window.width * image.width)
+            translate(-window.left * image.width * scale, -window.top * image.height * scale) {
+                with(painter) { draw(Size(image.width * scale, image.height * scale)) }
+            }
+        }
     }
+}
+
+/** One planned camera move per photo and display, so recomposition does not re-roll it. */
+private val shotCache = object : LinkedHashMap<Photo, Shot>(16, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Photo, Shot>?) = size > 4
 }
 
 @Composable
@@ -214,21 +255,25 @@ private val dateFormat = DateTimeFormatter.ofPattern("EEEE, d. MMMM", Locale.GER
 @Composable
 private fun Clock(nowMillis: Long, showSeconds: Boolean, modifier: Modifier) {
     val now = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(nowMillis), java.time.ZoneId.systemDefault())
+    // Soft shadow keeps white text readable on bright photos.
+    val readable = TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.55f), Offset(0f, 2f), blurRadius = 10f))
     Column(modifier) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
                 now.format(timeFormat),
                 color = Color.White,
                 fontSize = 128.ssp,
-                fontWeight = FontWeight.Thin,
+                fontWeight = FontWeight.ExtraLight,
                 lineHeight = 128.ssp,
+                style = readable,
             )
             if (showSeconds) {
                 Text(
                     now.format(secondsFormat),
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 48.ssp,
-                    fontWeight = FontWeight.Thin,
+                    fontWeight = FontWeight.ExtraLight,
+                    style = readable,
                     modifier = Modifier.padding(bottom = 18.sdp),
                 )
             }
@@ -237,7 +282,8 @@ private fun Clock(nowMillis: Long, showSeconds: Boolean, modifier: Modifier) {
             now.format(dateFormat),
             color = Color.White.copy(alpha = 0.85f),
             fontSize = 30.ssp,
-            fontWeight = FontWeight.Light,
+            fontWeight = FontWeight.Normal,
+            style = readable,
         )
     }
 }

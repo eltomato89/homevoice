@@ -14,6 +14,7 @@ import de.homevoice.assistant.gemini.LiveProtocol
 import de.homevoice.assistant.gemini.ServerEvent
 import de.homevoice.assistant.gemini.SessionConfig
 import de.homevoice.assistant.mcp.HomeAssistantMcpClient
+import de.homevoice.assistant.media.MediaSessions
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.timer.TimerManager
@@ -65,6 +66,7 @@ class ConversationController(
     private val settingsRepository: SettingsRepository,
     private val timers: TimerManager,
     private val tools: ToolRegistry,
+    private val media: MediaSessions,
     private val wsHttp: OkHttpClient,
     private val restHttp: OkHttpClient,
     private val scope: CoroutineScope,
@@ -97,6 +99,12 @@ class ConversationController(
     private var sessionJob: Job? = null
     private var newUserTurn = true
     private val toolJobs = mutableMapOf<String, Job>()
+    private val toolStartedAt = mutableMapOf<String, Long>()
+
+    /** A tool keeps the session open while it runs, but never longer than [TOOL_MAX_MS]. */
+    private fun toolRunning(now: Long): Boolean = toolJobs.any { (id, job) ->
+        job.isActive && now - (toolStartedAt[id] ?: now) < TOOL_MAX_MS
+    }
     private val runningJobs = mutableListOf<Job>()
 
     // Audio captured between wake word and setupComplete, plus the chunk being assembled for sending.
@@ -270,6 +278,7 @@ class ConversationController(
             return
         }
         earcons.play(Earcons.Tone.WAKE)
+        media.duck()
         if (s.communicationAudioMode) {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             @Suppress("DEPRECATION")
@@ -388,6 +397,7 @@ class ConversationController(
                     if (endRequestedAt == 0L) awaitingResponseSince = System.currentTimeMillis()
                 }
                 toolJobs[call.id] = job
+                toolStartedAt[call.id] = System.currentTimeMillis()
                 job.start()
             }
             is ServerEvent.ToolCallCancellation -> event.ids.forEach { toolJobs.remove(it)?.cancel() }
@@ -420,7 +430,7 @@ class ConversationController(
                 endAt != 0L && now - endAt > END_HARD_LIMIT_MS -> endSession(null)
                 // end_conversation: finish as soon as the already queued goodbye has been played.
                 endAt != 0L && !playing && now - endAt > END_GRACE_MS -> endSession(null)
-                playing || toolJobs.values.any { it.isActive } -> Unit
+                playing || toolRunning(now) -> Unit
                 endAt != 0L || waitingForAnswer -> Unit
                 idleMs > settings.followUpSeconds * 1000L -> {
                     Log.i(TAG, "No speech for ${settings.followUpSeconds} s")
@@ -444,7 +454,9 @@ class ConversationController(
         sessionJob = null
         toolJobs.values.forEach { it.cancel() }
         toolJobs.clear()
+        toolStartedAt.clear()
         output.stop()
+        media.unduck()
         wake.reset()
         if (settings.communicationAudioMode) {
             @Suppress("DEPRECATION")
@@ -524,6 +536,7 @@ class ConversationController(
         const val VAD_THRESHOLD = 0.5f
         const val END_HARD_LIMIT_MS = 15_000L
         const val RESPONSE_WAIT_MS = 10_000L
+        const val TOOL_MAX_MS = 30_000L
         const val ERROR_DISPLAY_MS = 5_000L
         const val HA_REFRESH_INTERVAL_MS = 30 * 60_000L
     }

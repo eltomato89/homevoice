@@ -57,7 +57,10 @@ class HomeAssistantMcpClientTest {
     }
 
     @After
-    fun tearDown() = server.shutdown()
+    fun tearDown() {
+        // The hanging-stream test leaves a throttled response behind that cannot shut down cleanly.
+        runCatching { server.shutdown() }
+    }
 
     private fun client() = HomeAssistantMcpClient(OkHttpClient(), server.url("/").toString(), "TOKEN")
 
@@ -112,6 +115,25 @@ class HomeAssistantMcpClientTest {
         c.listTools()
         assertTrue(requests.all { it.second.getHeader("Authorization") == null })
         assertEquals("/api/webhook/mcp_secret", requests[0].second.path)
+    }
+
+    @Test
+    fun timeoutAbortsAHangingEventStream() = runBlocking {
+        val c = client()
+        c.listTools()
+        // Server answers tools/call with an event stream that never delivers the result.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(": ping\n\n")
+                .setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.KEEP_OPEN)
+                .setBodyDelay(0, java.util.concurrent.TimeUnit.SECONDS)
+                .also { it.throttleBody(1, 60, java.util.concurrent.TimeUnit.SECONDS) }
+        }
+        val started = System.currentTimeMillis()
+        val result = runCatching { kotlinx.coroutines.withTimeout(500) { c.callTool("HassTurnOn", buildJsonObject { }) } }
+        assertTrue(result.exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+        assertTrue("took ${System.currentTimeMillis() - started} ms", System.currentTimeMillis() - started < 3_000)
     }
 
     @Test

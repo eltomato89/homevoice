@@ -4,7 +4,7 @@ Smart-Display-Sprachassistent für ein Android-Tablet (getestet als Ziel: Lineag
 
 - **Gemini Live API** mit nativem Audio-Modell: Sprache geht direkt rein und kommt direkt raus (kein STT/TTS)
 - **Lokales Hotword** mit [openWakeWord](https://github.com/dscripka/openWakeWord) (ONNX Runtime, kein Account) – solange niemand das Hotword sagt, besteht keine Verbindung zu Gemini
-- **Tools**: Timer (stellen, abbrechen, auflisten, Alarm stoppen) und **Home Assistant über MCP**
+- **Tools**: Timer (stellen, abbrechen, auflisten, Alarm stoppen), **Home Assistant über MCP** und **Musik** (Spotify, YouTube Music, Lautstärke)
 - **Launcher-UI**: Foto-Diashow aus einem lokalen Ordner, große Uhr, Timer-Anzeige, Statusleiste, Nachtmodus
 
 ## Was du brauchst
@@ -31,6 +31,18 @@ Danach auf dem Tablet:
 4. Alternativ auf dem Gerät: **lange auf den Bildschirm tippen** → Einstellungen: Gemini-Key, Wake Word wählen oder `.onnx` importieren, Home Assistant URL (+ ggf. Token) („Speichern & Verbindung testen“), Fotoordner wählen → **Speichern**
 
 Fotos z.B. per Syncthing oder USB in einen Ordner auf dem Tablet legen. Unterordner werden mit eingelesen, die Liste wird stündlich neu eingelesen.
+
+## Musik
+
+- **Spotify** (Premium nötig): Auf [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) eine App anlegen, Redirect URI `http://127.0.0.1:8080/spotify/callback` eintragen und die Client-ID in der Weboberfläche unter „Musik“ einfügen. „Mit Spotify verbinden“ → anmelden → die Seite danach lädt nicht (gewollt) → komplette Adresse aus der Adresszeile in die Weboberfläche kopieren. Gespielt wird über die Spotify-App auf dem Gerät (Spotify Connect); ist sie nicht aktiv, wird sie kurz geöffnet.
+- **YouTube Music** (Premium für Hintergrundwiedergabe): Die App sucht über die Such-Schnittstelle von music.youtube.com (inoffiziell, ohne Schlüssel) und öffnet das Ergebnis direkt in der YouTube-Music-App. Lieblingssongs = Playlist „Mag ich“.
+- Sprachbefehle z.B.: „Spiel Musik von Queen“, „Spiel meine Playlist Sommer“, „Spiel Bohemian Rhapsody auf YouTube Music“, „Lauter“, „Lautstärke 5“, „Lautstärke 30 Prozent“, „Stopp die Musik“, „Nächstes Lied“.
+- Läuft Musik, zeigt der Startbildschirm ein Widget mit Cover, Zurück, Play/Pause und Weiter. Beim Hotword wird die Musik leiser gestellt.
+- Benötigte Rechte (einmalig, z.B. per adb):
+  ```bash
+  adb shell cmd notification allow_listener de.homevoice.assistant/de.homevoice.assistant.media.MediaListenerService
+  adb shell appops set de.homevoice.assistant SYSTEM_ALERT_WINDOW allow
+  ```
 
 ## Bedienung
 

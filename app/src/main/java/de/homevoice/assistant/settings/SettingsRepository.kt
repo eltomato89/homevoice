@@ -17,7 +17,7 @@ val DEFAULT_SYSTEM_PROMPT = """
 Du bist ein freundlicher Sprachassistent auf einem Smart Display in einem privaten Zuhause.
 Antworte kurz, natürlich und gesprochen – keine Aufzählungen, kein Markdown.
 Sprich Deutsch, außer der Nutzer spricht eine andere Sprache.
-Nutze die Timer-Tools für Timer und Wecker. Nutze die Tools mit Präfix "ha_" um das Smart Home (Home Assistant) zu steuern oder abzufragen.
+Nutze die Timer-Tools für Timer und Wecker. Nutze play_music, music_control und set_volume für Musik ("spiel …", "lauter", "Lautstärke 5", "stopp die Musik"). Nutze die Tools mit Präfix "ha_" um das Smart Home (Home Assistant) zu steuern oder abzufragen.
 Bestätige ausgeführte Aktionen in einem kurzen Satz.
 Wenn der Nutzer sich verabschiedet ("tschüss", "danke, das war's", "stopp", "gute Nacht"), sich ohne weitere Frage bedankt oder offensichtlich fertig ist: sag zuerst kurz "Tschüss!" (oder Ähnliches, höchstens zwei Wörter) und rufe direkt danach end_conversation auf. Sprich nach end_conversation nichts mehr.
 """.trimIndent()
@@ -40,6 +40,12 @@ data class Settings(
     val customWakeModelPath: String = "",
     /** Detection threshold for the wake word score (0..1); lower = more sensitive. */
     val wakeThreshold: Float = 0.5f,
+    /** Client ID of the user's own Spotify developer app (PKCE, no secret). */
+    val spotifyClientId: String = "",
+    /** Name of this device in Spotify Connect, if it differs from the model name. */
+    val spotifyDeviceName: String = "",
+    /** "spotify" or "youtube_music". */
+    val defaultMusicService: String = "spotify",
     val haUrl: String = "",
     val haToken: String = "",
     val photoTreeUri: String = "",
@@ -86,6 +92,9 @@ class SettingsRepository(context: Context) {
             wakeModel = prefs.getString("wakeModel", d.wakeModel)!!,
             customWakeModelPath = prefs.getString("customWakeModelPath", d.customWakeModelPath)!!,
             wakeThreshold = prefs.getFloat("wakeThreshold", d.wakeThreshold),
+            spotifyClientId = prefs.getString("spotifyClientId", d.spotifyClientId)!!,
+            spotifyDeviceName = prefs.getString("spotifyDeviceName", d.spotifyDeviceName)!!,
+            defaultMusicService = prefs.getString("defaultMusicService", d.defaultMusicService)!!,
             haUrl = prefs.getString("haUrl", d.haUrl)!!,
             haToken = prefs.getString("haToken", d.haToken)!!,
             photoTreeUri = prefs.getString("photoTreeUri", d.photoTreeUri)!!,
@@ -109,6 +118,9 @@ class SettingsRepository(context: Context) {
             .putString("wakeModel", s.wakeModel)
             .putString("customWakeModelPath", s.customWakeModelPath)
             .putFloat("wakeThreshold", s.wakeThreshold)
+            .putString("spotifyClientId", s.spotifyClientId)
+            .putString("spotifyDeviceName", s.spotifyDeviceName)
+            .putString("defaultMusicService", s.defaultMusicService)
             .putString("haUrl", s.haUrl)
             .putString("haToken", s.haToken)
             .putString("photoTreeUri", s.photoTreeUri)

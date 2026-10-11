@@ -1,6 +1,11 @@
 package de.homevoice.assistant.mcp
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -117,7 +122,7 @@ class HomeAssistantMcpClient(
             put("jsonrpc", "2.0")
             put("method", method)
         }.toString()
-        http.newCall(post(body)).execute().use { response ->
+        execute(post(body)) { response ->
             if (!response.isSuccessful && response.code != 202) {
                 throw McpException("$method fehlgeschlagen: HTTP ${response.code}")
             }
@@ -132,7 +137,7 @@ class HomeAssistantMcpClient(
             put("method", method)
             put("params", params)
         }.toString()
-        http.newCall(post(body)).execute().use { response ->
+        execute(post(body)) { response ->
             if (response.code == 404 && sessionId != null) throw SessionExpired()
             if (response.code == 401 || response.code == 403) {
                 throw McpException(
@@ -147,6 +152,26 @@ class HomeAssistantMcpClient(
                 throw McpException("MCP-Fehler: ${(err["message"] as? JsonPrimitive)?.contentOrNull ?: err}")
             }
             message["result"] as? JsonObject ?: JsonObject(emptyMap())
+        }
+    }
+
+    /**
+     * Runs the blocking HTTP call on the IO dispatcher and aborts the connection when the coroutine is
+     * cancelled (e.g. by the tool timeout). Without this a server that keeps an event stream open
+     * would block the caller forever, because cancellation cannot interrupt a blocking read.
+     */
+    private suspend fun <T> execute(request: Request, block: (Response) -> T): T = coroutineScope {
+        val call = http.newCall(request)
+        val canceller = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { call.cancel() }
+        }
+        try {
+            withContext(Dispatchers.IO) { call.execute().use(block) }
+        } catch (e: IOException) {
+            ensureActive() // report a cancellation/timeout as such, not as "socket closed"
+            throw e
+        } finally {
+            canceller.cancel()
         }
     }
 
