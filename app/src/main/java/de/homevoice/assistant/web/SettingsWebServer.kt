@@ -7,7 +7,10 @@ import de.homevoice.assistant.media.MusicPlayer
 import de.homevoice.assistant.media.PrefsSpotifyTokenStore
 import de.homevoice.assistant.media.SPOTIFY_PACKAGE
 import de.homevoice.assistant.media.YOUTUBE_MUSIC_PACKAGE
+import de.homevoice.assistant.radio.RadioBrowser
+import de.homevoice.assistant.radio.RadioPlayer
 import de.homevoice.assistant.service.ConversationController
+import de.homevoice.assistant.settings.RadioStation
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.slideshow.PhotoRepository
@@ -49,6 +52,8 @@ class SettingsWebServer(
     private val music: MusicPlayer,
     private val mediaSessions: MediaSessions,
     private val spotifyTokens: PrefsSpotifyTokenStore,
+    private val radio: RadioPlayer,
+    private val radioBrowser: RadioBrowser,
     val port: Int = 8080,
 ) {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
@@ -234,6 +239,34 @@ class SettingsWebServer(
                 val text = runBlocking { withContext(Dispatchers.Main) { controller.previewHomeContext(template) } }
                 Response.json(buildJsonObject { put("text", text) })
             }
+            "POST /api/radio/search" -> {
+                val query = (json.parseToJsonElement(r.readBody()).jsonObject["query"] as? JsonPrimitive)?.content
+                    ?: throw IllegalArgumentException("query fehlt")
+                val results = runBlocking { radioBrowser.search(query, limit = 15) }
+                Response.json(buildJsonObject {
+                    put("results", buildJsonArray {
+                        results.forEach { s ->
+                            add(buildJsonObject {
+                                put("name", s.name); put("url", s.url); put("country", s.country)
+                                put("codec", s.codec); put("bitrate", s.bitrate)
+                            })
+                        }
+                    })
+                })
+            }
+            "POST /api/radio/play" -> {
+                val body = json.parseToJsonElement(r.readBody()).jsonObject
+                val station = RadioStation(
+                    (body["name"] as? JsonPrimitive)?.content ?: "Radio",
+                    (body["url"] as? JsonPrimitive)?.content ?: throw IllegalArgumentException("url fehlt"),
+                )
+                runBlocking { withContext(Dispatchers.Main) { radio.play(station) } }
+                Response.json(state())
+            }
+            "POST /api/radio/stop" -> {
+                runBlocking { withContext(Dispatchers.Main) { radio.stop() } }
+                Response.json(state())
+            }
             "POST /api/spotify/authorize" ->
                 Response.json(buildJsonObject { put("url", music.spotify.authorizationUrl(SPOTIFY_REDIRECT_URI)) })
             "POST /api/spotify/callback" -> {
@@ -298,6 +331,10 @@ class SettingsWebServer(
                 put("hotwordError", status.hotwordError)
                 put("homeAssistant", status.homeAssistant)
                 put("homeContext", status.homeContext)
+                radio.nowPlaying.value?.let { now ->
+                    put("radio", if (now.artist == "Radio") now.title else "${now.artist}: ${now.title}")
+                    put("radioPlaying", now.isPlaying)
+                }
                 put("error", status.error)
                 put("wakePeak", controller.wakePeak)
                 put("spotifyConnected", music.spotify.isConnected)

@@ -17,6 +17,9 @@ import de.homevoice.assistant.timer.TimerManager
 import de.homevoice.assistant.tools.ToolRegistry
 import de.homevoice.assistant.tools.conversationTools
 import de.homevoice.assistant.tools.musicTools
+import de.homevoice.assistant.tools.radioTools
+import de.homevoice.assistant.radio.RadioBrowser
+import de.homevoice.assistant.radio.RadioPlayer
 import de.homevoice.assistant.tools.timerTools
 import de.homevoice.assistant.web.SettingsWebServer
 import kotlinx.coroutines.CoroutineScope
@@ -75,6 +78,10 @@ class AppContainer(app: Application) {
 
     val mediaSessions = MediaSessions(app)
 
+    val radio = RadioPlayer(app)
+
+    val radioBrowser = RadioBrowser(restHttp)
+
     val spotifyTokens = PrefsSpotifyTokenStore(app)
 
     val music = MusicPlayer(
@@ -83,6 +90,7 @@ class AppContainer(app: Application) {
         spotify = SpotifyClient(restHttp, { settings.current.spotifyClientId }, spotifyTokens),
         youTubeMusic = YouTubeMusicSearch(restHttp),
         sessions = mediaSessions,
+        radio = radio,
         bringToFront = {
             app.startActivity(
                 Intent(app, MainActivity::class.java)
@@ -104,11 +112,12 @@ class AppContainer(app: Application) {
 
     val photos = PhotoRepository(app)
 
-    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens)
+    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens, radio, radioBrowser)
 
     init {
         tools.setGroup("conversation", conversationTools { controller.requestEnd() })
         tools.setGroup("timer", timerTools(timerManager))
-        tools.setGroup("music", musicTools(music, mediaSessions, settings))
+        tools.setGroup("music", musicTools(music, mediaSessions, settings, radio))
+        tools.setGroup("radio", radioTools(radio, radioBrowser, settings))
     }
 }

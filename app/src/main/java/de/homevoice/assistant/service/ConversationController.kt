@@ -539,6 +539,10 @@ class ConversationController(
         if (tools.groupSize(HA_GROUP) == 0) {
             append("\nDie Smart-Home-Steuerung ist gerade nicht verfügbar.")
         }
+        if (s.radioStations.isNotEmpty()) {
+            append("\nGespeicherte Radiosender (für play_radio genau diesen Namen verwenden): ")
+            append(s.radioStations.joinToString { it.name })
+        }
         homeContext?.takeIf { System.currentTimeMillis() - it.second < HOME_CONTEXT_MAX_AGE_MS }?.let { (text, at) ->
             append("\n\n# Smart Home – Stand ")
             // (LocalTime.ofInstant needs API 31; the device runs Android 11)

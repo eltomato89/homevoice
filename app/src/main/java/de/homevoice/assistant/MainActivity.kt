@@ -49,7 +49,9 @@ class MainActivity : ComponentActivity() {
                 val status by container.controller.status.collectAsStateWithLifecycle()
                 val timers by container.timerManager.timers.collectAsStateWithLifecycle()
                 val ringing by container.timerManager.ringing.collectAsStateWithLifecycle()
-                val nowPlaying by container.mediaSessions.nowPlaying.collectAsStateWithLifecycle()
+                val sessionPlaying by container.mediaSessions.nowPlaying.collectAsStateWithLifecycle()
+                val radioPlaying by container.radio.nowPlaying.collectAsStateWithLifecycle()
+                val nowPlaying = radioPlaying ?: sessionPlaying
                 val scope = rememberCoroutineScope()
                 var showSetupCard by remember { mutableStateOf(false) }
                 var rescan by remember { mutableStateOf(0) }

@@ -24,6 +24,7 @@ class MusicPlayer(
     val spotify: SpotifyClient,
     private val youTubeMusic: YouTubeMusicSearch,
     private val sessions: MediaSessions,
+    private val radio: de.homevoice.assistant.radio.RadioPlayer,
     /** Brings the assistant UI back to the front after a music app was opened. */
     private val bringToFront: () -> Unit,
 ) {
@@ -35,8 +36,10 @@ class MusicPlayer(
     }
 
     /** Starts playback and returns a short description of what is playing. */
-    suspend fun play(query: String, type: String, service: String): String =
-        when (service) {
+    suspend fun play(query: String, type: String, service: String): String {
+        // Starting Spotify/YouTube Music takes audio focus anyway; drop the radio so controls go there.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { radio.stop() }
+        return when (service) {
             "youtube_music" -> {
                 if (!isInstalled(YOUTUBE_MUSIC_PACKAGE)) throw IllegalStateException("YouTube Music ist nicht installiert")
                 val target = try {
@@ -67,9 +70,21 @@ class MusicPlayer(
                 }
             }
         }
+    }
 
     /** pause, resume, next, previous. Prefers the local media session, falls back to the Spotify API. */
     suspend fun control(action: String) {
+        if (radio.isActive) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                when (action) {
+                    "pause", "stop" -> radio.pause()
+                    "resume", "play" -> radio.resume()
+                    "toggle" -> if (radio.nowPlaying.value?.isPlaying == true) radio.pause() else radio.resume()
+                    else -> throw IllegalArgumentException("Beim Radio gibt es kein nächstes/vorheriges Lied")
+                }
+            }
+            return
+        }
         if (sessions.control(action)) return
         if (!spotify.isConnected) throw IllegalStateException("Es läuft gerade keine Musik")
         when (action) {

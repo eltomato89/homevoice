@@ -6,7 +6,12 @@ import de.homevoice.assistant.settings.SettingsRepository
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-fun musicTools(player: MusicPlayer, sessions: MediaSessions, settings: SettingsRepository): List<ToolHandler> = listOf(
+fun musicTools(
+    player: MusicPlayer,
+    sessions: MediaSessions,
+    settings: SettingsRepository,
+    radio: de.homevoice.assistant.radio.RadioPlayer,
+): List<ToolHandler> = listOf(
     ToolHandler(
         declaration(
             "play_music",
@@ -62,7 +67,7 @@ fun musicTools(player: MusicPlayer, sessions: MediaSessions, settings: SettingsR
     ToolHandler(
         declaration("get_now_playing", "Liefert den gerade laufenden Titel, Interpret und die Lautstärke.")
     ) {
-        val now = sessions.nowPlaying.value
+        val now = radio.nowPlaying.value ?: sessions.nowPlaying.value
         buildJsonObject {
             if (now == null) put("playing", false) else {
                 put("playing", now.isPlaying)

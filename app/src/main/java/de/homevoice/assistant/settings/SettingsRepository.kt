@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import java.security.SecureRandom
 
 const val DEFAULT_MODEL = "gemini-3.8-live"
@@ -17,10 +19,14 @@ val DEFAULT_SYSTEM_PROMPT = """
 Du bist ein freundlicher Sprachassistent auf einem Smart Display in einem privaten Zuhause.
 Antworte kurz, natürlich und gesprochen – keine Aufzählungen, kein Markdown.
 Sprich Deutsch, außer der Nutzer spricht eine andere Sprache.
-Nutze die Timer-Tools für Timer und Wecker. Nutze play_music, music_control und set_volume für Musik ("spiel …", "lauter", "Lautstärke 5", "stopp die Musik"). Nutze die Tools mit Präfix "ha_" um das Smart Home (Home Assistant) zu steuern oder abzufragen.
+Nutze die Timer-Tools für Timer und Wecker. Nutze play_music, music_control und set_volume für Musik ("spiel …", "lauter", "Lautstärke 5", "stopp die Musik") und play_radio für Radiosender ("spiel 1LIVE", "Radio WDR 2"). Nutze die Tools mit Präfix "ha_" um das Smart Home (Home Assistant) zu steuern oder abzufragen.
 Bestätige ausgeführte Aktionen in einem kurzen Satz.
 Wenn der Nutzer sich verabschiedet ("tschüss", "danke, das war's", "stopp", "gute Nacht"), sich ohne weitere Frage bedankt oder offensichtlich fertig ist: sag zuerst kurz "Tschüss!" (oder Ähnliches, höchstens zwei Wörter) und rufe direkt danach end_conversation auf. Sprich nach end_conversation nichts mehr.
 """.trimIndent()
+
+/** A radio station the assistant can play (saved by the user or learned from Radio Browser). */
+@Serializable
+data class RadioStation(val name: String, val url: String)
 
 @Serializable
 data class Settings(
@@ -44,6 +50,8 @@ data class Settings(
     val spotifyClientId: String = "",
     /** Name of this device in Spotify Connect, if it differs from the model name. */
     val spotifyDeviceName: String = "",
+    /** Known radio stations; searched first before asking Radio Browser. */
+    val radioStations: List<RadioStation> = emptyList(),
     /** "spotify" or "youtube_music". */
     val defaultMusicService: String = "spotify",
     /** Microphone switched off with the button on the display (survives restarts). */
@@ -104,6 +112,9 @@ class SettingsRepository(context: Context) {
             spotifyClientId = prefs.getString("spotifyClientId", d.spotifyClientId)!!,
             spotifyDeviceName = prefs.getString("spotifyDeviceName", d.spotifyDeviceName)!!,
             defaultMusicService = prefs.getString("defaultMusicService", d.defaultMusicService)!!,
+            radioStations = prefs.getString("radioStations", null)
+                ?.let { runCatching { Json.decodeFromString(ListSerializer(RadioStation.serializer()), it) }.getOrNull() }
+                ?: d.radioStations,
             micMuted = prefs.getBoolean("micMuted", d.micMuted),
             haUrl = prefs.getString("haUrl", d.haUrl)!!,
             haContextTemplate = prefs.getString("haContextTemplate", d.haContextTemplate)!!,
@@ -133,6 +144,7 @@ class SettingsRepository(context: Context) {
             .putString("spotifyClientId", s.spotifyClientId)
             .putString("spotifyDeviceName", s.spotifyDeviceName)
             .putString("defaultMusicService", s.defaultMusicService)
+            .putString("radioStations", Json.encodeToString(ListSerializer(RadioStation.serializer()), s.radioStations))
             .putBoolean("micMuted", s.micMuted)
             .putString("haUrl", s.haUrl)
             .putString("haContextTemplate", s.haContextTemplate)

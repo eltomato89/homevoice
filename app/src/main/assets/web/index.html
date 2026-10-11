@@ -24,6 +24,12 @@
   .gallery figcaption { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(0,0,0,.6); color: var(--text); }
   .gallery .del { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.65); color: #fff; font-size: 18px; line-height: 30px; }
   .gallery .del:hover { background: var(--err); }
+  .stations { display: grid; gap: 6px; margin-top: 10px; }
+  .station { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(160px, 2.5fr) auto auto; gap: 6px; align-items: center; }
+  .station.result { grid-template-columns: 1fr auto auto; font-size: 13px; }
+  .station .meta { color: var(--muted); font-size: 12px; }
+  .icon-btn { width: 36px; height: 36px; padding: 0; border-radius: 50%; font-size: 15px; }
+  @media (max-width: 520px) { .station { grid-template-columns: 1fr auto auto; } .station input.url { grid-column: 1 / -1; grid-row: 2; } }
   .meter { position: relative; height: 10px; background: #0d1217; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .meter div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
   .meter span { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--err); }
@@ -133,6 +139,23 @@
     </section>
 
     <section>
+      <h2>Radio</h2>
+      <div class="status" id="radioStatus"></div>
+      <div class="hint">Deine Sender – Gemini kennt diese Namen („Spiel 1LIVE“). Unbekannte Sender sucht es selbst im Verzeichnis radio-browser.info und speichert sie hier.</div>
+      <div id="stations" class="stations"></div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:0 0 auto"><button class="secondary" id="addStation">Sender hinzufügen</button></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="stopRadio">Radio stoppen</button></div>
+      </div>
+      <label>Sender suchen (radio-browser.info)</label>
+      <div class="row">
+        <div style="flex:1 1 300px"><input id="radioQuery" type="text" placeholder="z.B. WDR 2, Deutschlandfunk, Antenne Bayern"></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="radioSearch">Suchen</button></div>
+      </div>
+      <div id="radioResults" class="stations"></div>
+    </section>
+
+    <section>
       <h2>Home Assistant (MCP)</h2>
       <div class="status" id="haStatus"></div>
       <label>URL</label>
@@ -230,6 +253,8 @@ function render(data, fields = true) {
   $('wakePeakText').textContent = 'Spitze: ' + st.wakePeak.toFixed(2) + ' · Schwelle: ' + s.wakeThreshold.toFixed(2)
     + ' – Wake Word sagen und beobachten; liegt die Spitze knapp unter der Schwelle, Schwelle senken.';
   $('haStatus').textContent = st.homeAssistant;
+  $('radioStatus').textContent = st.radio ? (st.radioPlaying ? '▶ ' : '⏸ ') + st.radio : 'Radio aus';
+  if (fields) renderStations(s.radioStations);
   $('homeContextStatus').textContent = 'Hausstatus: ' + st.homeContext;
   $('redirectUri').textContent = st.redirectUri;
   $('musicStatus').innerHTML = [
@@ -250,6 +275,7 @@ function collect() {
   NUMBER_FLOAT.forEach(k => out[k] = parseFloat($(k).value));
   BOOL.forEach(k => out[k] = $(k).checked);
   SECRETS.forEach(k => { if ($(k).value.trim()) out[k] = $(k).value.trim(); });
+  out.radioStations = collectStations();
   return out;
 }
 
@@ -362,6 +388,52 @@ $('previewContext').onclick = () => run($('previewContext'), async () => {
   pre.textContent = r.text + '\n\n— ' + r.text.length + ' Zeichen, ca. ' + Math.round(r.text.length / 4) + ' Tokens';
   pre.classList.remove('hidden');
   msg('Vorschau erstellt (noch nicht gespeichert)', 'ok');
+});
+// ---- Radio stations: edited as rows, saved together with the other settings.
+function stationRow(st) {
+  const row = document.createElement('div');
+  row.className = 'station';
+  const name = document.createElement('input'); name.type = 'text'; name.value = st.name; name.placeholder = 'Name'; name.className = 'name';
+  const url = document.createElement('input'); url.type = 'text'; url.value = st.url; url.placeholder = 'https://…/stream.mp3'; url.className = 'url';
+  const play = document.createElement('button'); play.className = 'secondary icon-btn'; play.textContent = '▶'; play.title = 'Auf dem Gerät abspielen';
+  play.onclick = () => run(play, async () => { render(await api('POST', '/api/radio/play', { name: name.value, url: url.value }), false); msg('Spielt: ' + name.value, 'ok'); });
+  const del = document.createElement('button'); del.className = 'secondary icon-btn'; del.textContent = '×'; del.title = 'Entfernen';
+  del.onclick = () => { row.remove(); msg('Sender entfernt – Speichern nicht vergessen'); };
+  row.append(name, url, play, del);
+  return row;
+}
+function renderStations(list) {
+  const box = $('stations');
+  box.innerHTML = '';
+  (list || []).forEach(st => box.append(stationRow(st)));
+}
+function collectStations() {
+  return Array.from($('stations').querySelectorAll('.station'))
+    .map(r => ({ name: r.querySelector('.name').value.trim(), url: r.querySelector('.url').value.trim() }))
+    .filter(st => st.name && st.url);
+}
+$('addStation').onclick = () => { $('stations').append(stationRow({ name: '', url: '' })); };
+$('stopRadio').onclick = () => run($('stopRadio'), async () => { render(await api('POST', '/api/radio/stop'), false); msg('Radio gestoppt', 'ok'); });
+$('radioQuery').onkeydown = e => { if (e.key === 'Enter') $('radioSearch').click(); };
+$('radioSearch').onclick = () => run($('radioSearch'), async () => {
+  const box = $('radioResults');
+  box.innerHTML = '';
+  const r = await api('POST', '/api/radio/search', { query: $('radioQuery').value });
+  if (!r.results.length) { msg('Nichts gefunden'); return; }
+  for (const res of r.results) {
+    const row = document.createElement('div'); row.className = 'station result';
+    const label = document.createElement('div');
+    label.innerHTML = '<b></b> <span class="meta"></span>';
+    label.querySelector('b').textContent = res.name;
+    label.querySelector('.meta').textContent = [res.country, res.codec, res.bitrate ? res.bitrate + ' kbit/s' : ''].filter(Boolean).join(' · ');
+    const play = document.createElement('button'); play.className = 'secondary icon-btn'; play.textContent = '▶'; play.title = 'Probehören auf dem Gerät';
+    play.onclick = () => run(play, async () => { render(await api('POST', '/api/radio/play', res), false); msg('Spielt: ' + res.name, 'ok'); });
+    const add = document.createElement('button'); add.className = 'secondary icon-btn'; add.textContent = '+'; add.title = 'Zu meinen Sendern';
+    add.onclick = () => { $('stations').append(stationRow(res)); msg(res.name + ' hinzugefügt – Speichern nicht vergessen'); };
+    row.append(label, play, add);
+    box.append(row);
+  }
+  msg(r.results.length + ' Sender gefunden', 'ok');
 });
 $('photos').onchange = e => run($('photos'), async () => {
   const files = Array.from(e.target.files);

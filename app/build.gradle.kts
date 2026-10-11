@@ -57,6 +57,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(project(":wakeword"))
     implementation(libs.onnxruntime.android)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
