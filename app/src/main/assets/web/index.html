@@ -84,6 +84,7 @@
       <div class="row">
         <div><label>Nachlaufzeit nach Antwort (Sekunden)</label><input id="followUpSeconds" type="number" min="3" max="60"></div>
       </div>
+      <label class="check"><input id="micMuted" type="checkbox"> Mikrofon aus (wie die Taste oben rechts am Gerät)</label>
       <label class="check"><input id="halfDuplex" type="checkbox"> Halbduplex – Mikro stumm während Gemini spricht, unterbrechen per Hotword</label>
       <label class="check"><input id="communicationAudioMode" type="checkbox"> Kommunikations-Audiomodus (für Geräte mit Echo-Unterdrückung)</label>
     </section>
@@ -139,6 +140,14 @@
       <div class="hint">Basis-URL → eingebauter MCP-Server (Token nötig). Vollständige Webhook-URL (z.B. HA-MCP) → ohne Token.</div>
       <label>Access Token (optional) <span id="haTokenSet" class="set"></span></label>
       <input id="haToken" type="password" placeholder="leer lassen = unverändert" autocomplete="off">
+      <label class="check"><input id="haAllTools" type="checkbox"> Auch Admin-Werkzeuge erlauben (Neustart, Löschen, HACS, Backups …) – nicht empfohlen</label>
+      <label>Hausstatus für Gemini (Jinja-Template, wird jede Minute in Home Assistant berechnet; benötigt HA-MCP)</label>
+      <textarea id="haContextTemplate" spellcheck="false" style="min-height:220px; font-family: ui-monospace, Menlo, monospace; font-size: 12px" placeholder="leer = aus"></textarea>
+      <div class="status" id="homeContextStatus"></div>
+      <div class="row" style="margin-top:12px">
+        <div style="flex:0 0 auto"><button class="secondary" id="previewContext">Vorschau</button></div>
+      </div>
+      <pre id="contextPreview" class="status hidden" style="white-space: pre-wrap; max-height: 360px; overflow: auto"></pre>
       <div class="row" style="margin-top:12px">
         <div style="flex:0 0 auto"><button class="secondary" id="testHa">Speichern &amp; testen</button></div>
         <div style="flex:0 0 auto"><button class="secondary" id="clearHa">Token löschen</button></div>
@@ -174,10 +183,10 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'wakeModel', 'defaultMusicService', 'spotifyDeviceName', 'spotifyClientId'];
+const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'haContextTemplate', 'wakeModel', 'defaultMusicService', 'spotifyDeviceName', 'spotifyClientId'];
 const NUMBER_INT = ['followUpSeconds', 'slideIntervalSeconds', 'nightStartHour', 'nightEndHour'];
 const NUMBER_FLOAT = ['wakeThreshold'];
-const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled'];
+const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled', 'micMuted', 'haAllTools'];
 const SECRETS = ['geminiApiKey', 'haToken'];
 let pin = '';
 try { pin = localStorage.getItem('pin') || ''; } catch (e) {}
@@ -206,6 +215,7 @@ function render(data, fields = true) {
     sel.dataset.options = options;
     sel.value = s.wakeModel;
   }
+  $('micMuted').checked = s.micMuted; // can be switched on the device at any time
   if (fields) {
     TEXT.concat(NUMBER_INT, NUMBER_FLOAT).forEach(k => $(k).value = s[k]);
     BOOL.forEach(k => $(k).checked = s[k]);
@@ -220,6 +230,7 @@ function render(data, fields = true) {
   $('wakePeakText').textContent = 'Spitze: ' + st.wakePeak.toFixed(2) + ' · Schwelle: ' + s.wakeThreshold.toFixed(2)
     + ' – Wake Word sagen und beobachten; liegt die Spitze knapp unter der Schwelle, Schwelle senken.';
   $('haStatus').textContent = st.homeAssistant;
+  $('homeContextStatus').textContent = 'Hausstatus: ' + st.homeContext;
   $('redirectUri').textContent = st.redirectUri;
   $('musicStatus').innerHTML = [
     'Spotify: ' + (st.spotifyConnected ? '✓ verbunden' + (st.spotifyUser ? ' als ' + st.spotifyUser : '') : 'nicht verbunden')
@@ -341,6 +352,17 @@ async function loadGallery(force) {
   }
 }
 
+$('micMuted').onchange = () => run($('micMuted'), async () => {
+  render(await api('POST', '/api/settings', { micMuted: $('micMuted').checked }), false);
+  msg($('micMuted').checked ? 'Mikrofon aus' : 'Mikrofon an', 'ok');
+});
+$('previewContext').onclick = () => run($('previewContext'), async () => {
+  const r = await api('POST', '/api/ha/context-preview', { template: $('haContextTemplate').value });
+  const pre = $('contextPreview');
+  pre.textContent = r.text + '\n\n— ' + r.text.length + ' Zeichen, ca. ' + Math.round(r.text.length / 4) + ' Tokens';
+  pre.classList.remove('hidden');
+  msg('Vorschau erstellt (noch nicht gespeichert)', 'ok');
+});
 $('photos').onchange = e => run($('photos'), async () => {
   const files = Array.from(e.target.files);
   for (let i = 0; i < files.length; i++) {

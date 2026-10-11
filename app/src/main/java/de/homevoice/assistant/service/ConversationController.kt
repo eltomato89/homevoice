@@ -21,6 +21,7 @@ import de.homevoice.assistant.timer.TimerManager
 import de.homevoice.assistant.tools.HA_GROUP
 import de.homevoice.assistant.tools.ToolRegistry
 import de.homevoice.assistant.tools.loadHomeAssistantTools
+import de.homevoice.assistant.tools.renderHomeAssistantTemplate
 import de.homevoice.assistant.wakeword.WakeWordDetector
 import de.homevoice.wakeword.SileroVad
 import kotlinx.coroutines.CoroutineScope
@@ -49,9 +50,11 @@ enum class AssistantState { IDLE, CONNECTING, LISTENING, SPEAKING, ERROR }
 data class AssistantStatus(
     val state: AssistantState = AssistantState.IDLE,
     val running: Boolean = false,
+    val micMuted: Boolean = false,
     val hotword: String? = null,
     val hotwordError: String? = null,
     val homeAssistant: String = "nicht konfiguriert",
+    val homeContext: String = "aus",
     val error: String? = null,
     val userText: String = "",
     val modelText: String = "",
@@ -124,11 +127,9 @@ class ConversationController(
         runningJobs += scope.launch {
             initVad()
             initWakeWord()
-            try {
-                audioInput.start()
-            } catch (e: Exception) {
-                Log.e(TAG, "Microphone start failed", e)
-                _status.update { it.copy(error = "Mikrofon: ${e.message}") }
+            // Follow the mute switch; a muted microphone is not recording at all.
+            settingsRepository.settings.map { it.micMuted }.distinctUntilChanged().collect { muted ->
+                applyMicMuted(muted)
             }
         }
         runningJobs += scope.launch {
@@ -139,14 +140,26 @@ class ConversationController(
                 .collect { initWakeWord() }
         }
         runningJobs += scope.launch {
-            settingsRepository.settings.map { it.haUrl to it.haToken }.distinctUntilChanged().collect {
+            settingsRepository.settings.map { listOf(it.haUrl, it.haToken, it.haAllTools) }.distinctUntilChanged().collect {
                 refreshHomeAssistantTools()
+                refreshHomeContext()
+            }
+        }
+        runningJobs += scope.launch {
+            settingsRepository.settings.map { it.haContextTemplate }.distinctUntilChanged().drop(1).collect {
+                refreshHomeContext()
             }
         }
         runningJobs += scope.launch {
             while (isActive) {
                 delay(HA_REFRESH_INTERVAL_MS)
                 if (session == null) refreshHomeAssistantTools()
+            }
+        }
+        runningJobs += scope.launch {
+            while (isActive) {
+                delay(HOME_CONTEXT_INTERVAL_MS)
+                if (session == null) refreshHomeContext()
             }
         }
         runningJobs += scope.launch { watchdog() }
@@ -168,8 +181,33 @@ class ConversationController(
         when {
             timers.stopRinging() -> earcons.play(Earcons.Tone.END)
             session != null -> endSession(null)
+            settings.micMuted -> earcons.play(Earcons.Tone.ERROR)
             else -> startSession()
         }
+    }
+
+    /** The microphone button on the display. */
+    fun setMicMuted(muted: Boolean) {
+        settingsRepository.update { it.copy(micMuted = muted) }
+        earcons.play(if (muted) Earcons.Tone.END else Earcons.Tone.WAKE)
+    }
+
+    private fun applyMicMuted(muted: Boolean) {
+        if (muted) {
+            endSession(null, silent = true)
+            audioInput.stop()
+            Log.i(TAG, "Microphone muted")
+        } else {
+            try {
+                wake.reset()
+                audioInput.start()
+                Log.i(TAG, "Microphone on")
+            } catch (e: Exception) {
+                Log.e(TAG, "Microphone start failed", e)
+                _status.update { it.copy(error = "Mikrofon: ${e.message}") }
+            }
+        }
+        _status.update { it.copy(micMuted = muted) }
     }
 
     /** Called by the end_conversation tool: close once the current answer has been spoken. */
@@ -501,6 +539,43 @@ class ConversationController(
         if (tools.groupSize(HA_GROUP) == 0) {
             append("\nDie Smart-Home-Steuerung ist gerade nicht verfügbar.")
         }
+        homeContext?.takeIf { System.currentTimeMillis() - it.second < HOME_CONTEXT_MAX_AGE_MS }?.let { (text, at) ->
+            append("\n\n# Smart Home – Stand ")
+            // (LocalTime.ofInstant needs API 31; the device runs Android 11)
+            append(DateTimeFormatter.ofPattern("HH:mm").format(java.time.Instant.ofEpochMilli(at).atZone(ZonedDateTime.now().zone)))
+            append(" (für aktuelle Werte ggf. ha_get_state)\n")
+            append(text.trim())
+        }
+    }
+
+    /** Last rendered home status (text, time) for the system prompt. */
+    @Volatile private var homeContext: Pair<String, Long>? = null
+    @Volatile private var haClient: HomeAssistantMcpClient? = null
+
+    /** Renders the configured home status template in Home Assistant and caches it. */
+    suspend fun refreshHomeContext() {
+        val template = settings.haContextTemplate
+        val client = haClient
+        if (template.isBlank() || client == null) {
+            homeContext = null
+            _status.update { it.copy(homeContext = if (template.isBlank()) "aus" else "Home Assistant nicht verbunden") }
+            return
+        }
+        val message = try {
+            val text = renderHomeAssistantTemplate(client, template)
+            homeContext = text to System.currentTimeMillis()
+            "${text.length} Zeichen, Stand ${DateTimeFormatter.ofPattern("HH:mm:ss").format(java.time.LocalTime.now())}"
+        } catch (e: Exception) {
+            Log.w(TAG, "Home context could not be rendered", e)
+            "Fehler: ${e.message ?: e.javaClass.simpleName}"
+        }
+        _status.update { it.copy(homeContext = message) }
+    }
+
+    /** Renders [template] without saving it (preview in the web interface). */
+    suspend fun previewHomeContext(template: String): String {
+        val client = haClient ?: throw IllegalStateException("Home Assistant ist nicht verbunden")
+        return renderHomeAssistantTemplate(client, template)
     }
 
     // ---- Home Assistant -------------------------------------------------------------------------
@@ -509,13 +584,15 @@ class ConversationController(
     suspend fun refreshHomeAssistantTools(): String {
         val s = settings
         if (s.haUrl.isBlank()) {
+            haClient = null
             tools.setGroup(HA_GROUP, emptyList())
             return "nicht konfiguriert".also { msg -> _status.update { it.copy(homeAssistant = msg) } }
         }
         val client = HomeAssistantMcpClient(restHttp, s.haUrl, s.haToken.trim())
         val message = try {
-            val loaded = loadHomeAssistantTools(client)
+            val loaded = loadHomeAssistantTools(client, allowAll = s.haAllTools)
             tools.setGroup(HA_GROUP, loaded)
+            haClient = client
             Log.i(TAG, "Loaded ${loaded.size} Home Assistant tools: ${loaded.joinToString { it.name }}")
             "${loaded.size} Tools: ${loaded.joinToString { it.name.removePrefix("ha_") }}"
         } catch (e: Exception) {
@@ -539,5 +616,7 @@ class ConversationController(
         const val TOOL_MAX_MS = 30_000L
         const val ERROR_DISPLAY_MS = 5_000L
         const val HA_REFRESH_INTERVAL_MS = 30 * 60_000L
+        const val HOME_CONTEXT_INTERVAL_MS = 60_000L
+        const val HOME_CONTEXT_MAX_AGE_MS = 15 * 60_000L
     }
 }

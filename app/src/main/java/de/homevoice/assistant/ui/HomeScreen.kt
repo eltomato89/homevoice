@@ -15,6 +15,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,7 +42,11 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.Modifier
@@ -100,10 +107,11 @@ fun HomeScreen(
     onMediaAction: (String) -> Unit,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
+    onToggleMic: () -> Unit,
 ) {
     val scale = (LocalConfiguration.current.screenHeightDp / 420f).coerceIn(0.8f, 1.5f)
     CompositionLocalProvider(LocalUiScale provides scale) {
-        HomeContent(settings, status, photos, timers, ringing, night, setupHint, setupCard, nowPlaying, onMediaAction, onTap, onLongPress)
+        HomeContent(settings, status, photos, timers, ringing, night, setupHint, setupCard, nowPlaying, onMediaAction, onTap, onLongPress, onToggleMic)
     }
 }
 
@@ -121,6 +129,7 @@ private fun HomeContent(
     onMediaAction: (String) -> Unit,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
+    onToggleMic: () -> Unit,
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -170,7 +179,14 @@ private fun HomeContent(
         TimerChips(
             timers = timers,
             nowMillis = now,
-            modifier = Modifier.align(Alignment.TopEnd).padding(24.sdp),
+            // Leave the corner to the microphone button.
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.sdp, end = 24.sdp + MIC_BUTTON_SIZE.sdp + 12.sdp),
+        )
+
+        MicButton(
+            muted = status.micMuted,
+            onClick = onToggleMic,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 20.sdp, end = 20.sdp),
         )
 
         StatusHint(status, setupHint, photosEmpty = photos.isEmpty() && !night, modifier = Modifier.align(Alignment.TopStart).padding(24.sdp))
@@ -187,7 +203,11 @@ private fun HomeContent(
             )
         }
 
-        LightBar(status.state, modifier = Modifier.align(Alignment.BottomCenter))
+        if (status.micMuted) {
+            MutedBar(Modifier.align(Alignment.BottomCenter))
+        } else {
+            LightBar(status.state, modifier = Modifier.align(Alignment.BottomCenter))
+        }
 
         AnimatedVisibility(
             visible = setupCard != null,
@@ -422,6 +442,55 @@ private fun LightBar(state: AssistantState, modifier: Modifier) {
             .height(56.sdp)
             .alpha(pulse)
             .background(Brush.verticalGradient(listOf(Color.Transparent, color.copy(alpha = 0.55f), color)))
+    )
+}
+
+private const val MIC_BUTTON_SIZE = 52
+
+/** Microphone on/off, like the mute button on an Echo: red with a slash while muted. */
+@Composable
+private fun MicButton(muted: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    Box(
+        modifier
+            .size(MIC_BUTTON_SIZE.sdp)
+            .clip(CircleShape)
+            .background(if (muted) Palette.Error else Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size((MIC_BUTTON_SIZE * 0.5f).sdp)) {
+            val w = size.width
+            val h = size.height
+            val stroke = w * 0.09f
+            // Capsule
+            drawRoundRect(
+                Color.White,
+                topLeft = Offset(w * 0.34f, 0f),
+                size = Size(w * 0.32f, h * 0.6f),
+                cornerRadius = CornerRadius(w * 0.16f),
+            )
+            // Holder arc and stand
+            drawArc(
+                Color.White, startAngle = 0f, sweepAngle = 180f, useCenter = false,
+                topLeft = Offset(w * 0.18f, h * 0.22f), size = Size(w * 0.64f, h * 0.55f),
+                style = Stroke(stroke, cap = StrokeCap.Round),
+            )
+            drawLine(Color.White, Offset(w / 2, h * 0.78f), Offset(w / 2, h * 0.95f), stroke, StrokeCap.Round)
+            if (muted) {
+                drawLine(Color.White, Offset(w * 0.1f, h * 0.05f), Offset(w * 0.9f, h * 0.95f), stroke * 1.2f, StrokeCap.Round)
+            }
+        }
+    }
+}
+
+/** Steady red glow at the bottom edge while the microphone is off. */
+@Composable
+private fun MutedBar(modifier: Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(20.sdp)
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Palette.Error.copy(alpha = 0.8f))))
     )
 }
 

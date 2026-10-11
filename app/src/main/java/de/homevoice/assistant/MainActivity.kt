@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity() {
                         if (showSetupCard) showSetupCard = false else container.controller.toggle()
                     },
                     onLongPress = { showSetupCard = true },
+                    onToggleMic = { container.controller.setMicMuted(!status.micMuted) },
                 )
             }
         }

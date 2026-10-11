@@ -46,7 +46,16 @@ data class Settings(
     val spotifyDeviceName: String = "",
     /** "spotify" or "youtube_music". */
     val defaultMusicService: String = "spotify",
+    /** Microphone switched off with the button on the display (survives restarts). */
+    val micMuted: Boolean = false,
     val haUrl: String = "",
+    /**
+     * Jinja template rendered by Home Assistant (HA-MCP tool ha_eval_template) every minute; the
+     * result is added to the system prompt as the current home status. Empty = off.
+     */
+    val haContextTemplate: String = "",
+    /** Offer all HA-MCP tools, including admin ones (restart, delete, HACS, backups). */
+    val haAllTools: Boolean = false,
     val haToken: String = "",
     val photoTreeUri: String = "",
     val slideIntervalSeconds: Int = 30,
@@ -95,7 +104,10 @@ class SettingsRepository(context: Context) {
             spotifyClientId = prefs.getString("spotifyClientId", d.spotifyClientId)!!,
             spotifyDeviceName = prefs.getString("spotifyDeviceName", d.spotifyDeviceName)!!,
             defaultMusicService = prefs.getString("defaultMusicService", d.defaultMusicService)!!,
+            micMuted = prefs.getBoolean("micMuted", d.micMuted),
             haUrl = prefs.getString("haUrl", d.haUrl)!!,
+            haContextTemplate = prefs.getString("haContextTemplate", d.haContextTemplate)!!,
+            haAllTools = prefs.getBoolean("haAllTools", d.haAllTools),
             haToken = prefs.getString("haToken", d.haToken)!!,
             photoTreeUri = prefs.getString("photoTreeUri", d.photoTreeUri)!!,
             slideIntervalSeconds = prefs.getInt("slideIntervalSeconds", d.slideIntervalSeconds),
@@ -121,7 +133,10 @@ class SettingsRepository(context: Context) {
             .putString("spotifyClientId", s.spotifyClientId)
             .putString("spotifyDeviceName", s.spotifyDeviceName)
             .putString("defaultMusicService", s.defaultMusicService)
+            .putBoolean("micMuted", s.micMuted)
             .putString("haUrl", s.haUrl)
+            .putString("haContextTemplate", s.haContextTemplate)
+            .putBoolean("haAllTools", s.haAllTools)
             .putString("haToken", s.haToken)
             .putString("photoTreeUri", s.photoTreeUri)
             .putInt("slideIntervalSeconds", s.slideIntervalSeconds)

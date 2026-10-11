@@ -228,6 +228,12 @@ class SettingsWebServer(
                 val message = runBlocking { withContext(Dispatchers.Main) { controller.refreshHomeAssistantTools() } }
                 Response.json(buildJsonObject { put("result", message) })
             }
+            "POST /api/ha/context-preview" -> {
+                val template = (json.parseToJsonElement(r.readBody(200_000)).jsonObject["template"] as? JsonPrimitive)?.content
+                    ?: throw IllegalArgumentException("template fehlt")
+                val text = runBlocking { withContext(Dispatchers.Main) { controller.previewHomeContext(template) } }
+                Response.json(buildJsonObject { put("text", text) })
+            }
             "POST /api/spotify/authorize" ->
                 Response.json(buildJsonObject { put("url", music.spotify.authorizationUrl(SPOTIFY_REDIRECT_URI)) })
             "POST /api/spotify/callback" -> {
@@ -291,6 +297,7 @@ class SettingsWebServer(
                 put("hotword", status.hotword)
                 put("hotwordError", status.hotwordError)
                 put("homeAssistant", status.homeAssistant)
+                put("homeContext", status.homeContext)
                 put("error", status.error)
                 put("wakePeak", controller.wakePeak)
                 put("spotifyConnected", music.spotify.isConnected)
