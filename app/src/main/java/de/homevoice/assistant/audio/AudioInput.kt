@@ -35,7 +35,8 @@ class AudioInput(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minBuffer, frameLength * 2 * 8),
+            // ~1 s, so short pauses of the audio thread (e.g. speaker recognition at the wake word) lose nothing.
+            maxOf(minBuffer, frameLength * 2 * 32),
         )
         check(rec.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord konnte nicht initialisiert werden" }
         enableEffects(rec.audioSessionId)

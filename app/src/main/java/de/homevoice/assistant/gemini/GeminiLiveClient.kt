@@ -25,6 +25,8 @@ class GeminiLiveSession(
     private val http: OkHttpClient,
     private val apiKey: String,
     private val config: SessionConfig,
+    /** Last chance to adjust the setup right before it is sent (runs on the socket thread, may block briefly). */
+    private val beforeSetup: (SessionConfig) -> SessionConfig = { it },
 ) {
     private val channel = Channel<LiveEvent>(Channel.UNLIMITED)
     val events: Flow<LiveEvent> = channel.receiveAsFlow()
@@ -40,7 +42,7 @@ class GeminiLiveSession(
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isOpen = true
-                webSocket.send(LiveProtocol.setupMessage(config))
+                webSocket.send(LiveProtocol.setupMessage(beforeSetup(config)))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) = dispatch(text)
@@ -78,6 +80,11 @@ class GeminiLiveSession(
 
     fun sendToolResponses(responses: List<Triple<String, String, kotlinx.serialization.json.JsonObject>>) {
         if (isOpen) socket?.send(LiveProtocol.toolResponseMessage(responses))
+    }
+
+    /** Context for the model, e.g. who is speaking; does not trigger an answer. */
+    fun sendContext(text: String) {
+        if (isOpen) socket?.send(LiveProtocol.contextMessage(text))
     }
 
     fun close() {

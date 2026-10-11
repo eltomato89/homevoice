@@ -54,6 +54,10 @@ data class Settings(
     val radioStations: List<RadioStation> = emptyList(),
     /** "spotify" or "youtube_music". */
     val defaultMusicService: String = "spotify",
+    /** Recognize household members by voice (on-device) and tell the model who is speaking. */
+    val speakerRecognition: Boolean = true,
+    /** Minimum voice-print similarity (0..1) to accept a person. */
+    val speakerThreshold: Float = 0.5f,
     /** Microphone switched off with the button on the display (survives restarts). */
     val micMuted: Boolean = false,
     val haUrl: String = "",
@@ -116,6 +120,8 @@ class SettingsRepository(context: Context) {
                 ?.let { runCatching { Json.decodeFromString(ListSerializer(RadioStation.serializer()), it) }.getOrNull() }
                 ?: d.radioStations,
             micMuted = prefs.getBoolean("micMuted", d.micMuted),
+            speakerRecognition = prefs.getBoolean("speakerRecognition", d.speakerRecognition),
+            speakerThreshold = prefs.getFloat("speakerThreshold", d.speakerThreshold),
             haUrl = prefs.getString("haUrl", d.haUrl)!!,
             haContextTemplate = prefs.getString("haContextTemplate", d.haContextTemplate)!!,
             haAllTools = prefs.getBoolean("haAllTools", d.haAllTools),
@@ -146,6 +152,8 @@ class SettingsRepository(context: Context) {
             .putString("defaultMusicService", s.defaultMusicService)
             .putString("radioStations", Json.encodeToString(ListSerializer(RadioStation.serializer()), s.radioStations))
             .putBoolean("micMuted", s.micMuted)
+            .putBoolean("speakerRecognition", s.speakerRecognition)
+            .putFloat("speakerThreshold", s.speakerThreshold)
             .putString("haUrl", s.haUrl)
             .putString("haContextTemplate", s.haContextTemplate)
             .putBoolean("haAllTools", s.haAllTools)

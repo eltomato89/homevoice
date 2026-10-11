@@ -89,6 +89,19 @@ object LiveProtocol {
         }
     }.toString()
 
+    /** Adds text to the conversation without asking for an answer (turnComplete = false). */
+    fun contextMessage(text: String): String = buildJsonObject {
+        putJsonObject("clientContent") {
+            put("turns", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") { add(buildJsonObject { put("text", text) }) }
+                })
+            })
+            put("turnComplete", false)
+        }
+    }.toString()
+
     fun audioStreamEndMessage(): String = buildJsonObject {
         putJsonObject("realtimeInput") { put("audioStreamEnd", true) }
     }.toString()

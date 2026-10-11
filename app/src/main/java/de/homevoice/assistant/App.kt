@@ -10,6 +10,8 @@ import de.homevoice.assistant.media.YouTubeMusicSearch
 import de.homevoice.assistant.service.ConversationController
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.slideshow.PhotoRepository
+import de.homevoice.assistant.speaker.SpeakerProfiles
+import de.homevoice.assistant.speaker.SpeakerRecognizer
 import de.homevoice.assistant.timer.AlarmPlayer
 import de.homevoice.assistant.timer.AndroidAlarmScheduler
 import de.homevoice.assistant.timer.PrefsTimerStore
@@ -18,6 +20,9 @@ import de.homevoice.assistant.tools.ToolRegistry
 import de.homevoice.assistant.tools.conversationTools
 import de.homevoice.assistant.tools.musicTools
 import de.homevoice.assistant.tools.radioTools
+import de.homevoice.assistant.tools.speakerTools
+import de.homevoice.assistant.tools.memoryTools
+import de.homevoice.assistant.memory.MemoryStore
 import de.homevoice.assistant.radio.RadioBrowser
 import de.homevoice.assistant.radio.RadioPlayer
 import de.homevoice.assistant.tools.timerTools
@@ -99,12 +104,21 @@ class AppContainer(app: Application) {
         },
     )
 
+    val speakerProfiles = SpeakerProfiles(app)
+
+    val memory = MemoryStore(java.io.File(app.filesDir, "memories.json"))
+
+    val speakerRecognizer = SpeakerRecognizer(app, speakerProfiles)
+
     val controller = ConversationController(
         context = app,
         settingsRepository = settings,
         timers = timerManager,
         tools = tools,
         media = mediaSessions,
+        profiles = speakerProfiles,
+        speakers = speakerRecognizer,
+        memory = memory,
         wsHttp = wsHttp,
         restHttp = restHttp,
         scope = scope,
@@ -112,12 +126,14 @@ class AppContainer(app: Application) {
 
     val photos = PhotoRepository(app)
 
-    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens, radio, radioBrowser)
+    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens, radio, radioBrowser, speakerProfiles, memory)
 
     init {
         tools.setGroup("conversation", conversationTools { controller.requestEnd() })
         tools.setGroup("timer", timerTools(timerManager))
         tools.setGroup("music", musicTools(music, mediaSessions, settings, radio))
         tools.setGroup("radio", radioTools(radio, radioBrowser, settings))
+        tools.setGroup("speaker", speakerTools(controller))
+        tools.setGroup("memory", memoryTools(memory) { controller.currentSpeakerName() })
     }
 }

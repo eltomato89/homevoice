@@ -210,6 +210,14 @@ private fun HomeContent(
         }
 
         AnimatedVisibility(
+            visible = status.enrollment != null,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.sdp),
+        ) {
+            status.enrollment?.let { (name, sentence) -> EnrollmentCard(name, sentence) }
+        }
+
+        AnimatedVisibility(
             visible = setupCard != null,
             enter = fadeIn(), exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center),
@@ -492,6 +500,21 @@ private fun MutedBar(modifier: Modifier) {
             .height(20.sdp)
             .background(Brush.verticalGradient(listOf(Color.Transparent, Palette.Error.copy(alpha = 0.8f))))
     )
+}
+
+/** Shown while a household member reads a sentence for voice enrollment. */
+@Composable
+private fun EnrollmentCard(name: String, sentence: String) {
+    Column(
+        Modifier
+            .background(Color.Black.copy(alpha = 0.85f), RoundedCornerShape(24.sdp))
+            .padding(horizontal = 36.sdp, vertical = 26.sdp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.sdp),
+    ) {
+        Text("Stimmprobe für $name – bitte vorlesen:", color = Palette.Listening, fontSize = 22.ssp)
+        Text(sentence, color = Color.White, fontSize = 30.ssp, textAlign = TextAlign.Center, lineHeight = 38.ssp)
+    }
 }
 
 /** Where to configure the device; settings themselves are only available in the browser. */

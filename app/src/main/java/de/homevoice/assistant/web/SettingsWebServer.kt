@@ -11,6 +11,8 @@ import de.homevoice.assistant.radio.RadioBrowser
 import de.homevoice.assistant.radio.RadioPlayer
 import de.homevoice.assistant.service.ConversationController
 import de.homevoice.assistant.settings.RadioStation
+import de.homevoice.assistant.speaker.SpeakerProfiles
+import de.homevoice.assistant.memory.MemoryStore
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.slideshow.PhotoRepository
@@ -54,6 +56,8 @@ class SettingsWebServer(
     private val spotifyTokens: PrefsSpotifyTokenStore,
     private val radio: RadioPlayer,
     private val radioBrowser: RadioBrowser,
+    private val speakers: SpeakerProfiles,
+    private val memory: MemoryStore,
     val port: Int = 8080,
 ) {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
@@ -239,6 +243,74 @@ class SettingsWebServer(
                 val text = runBlocking { withContext(Dispatchers.Main) { controller.previewHomeContext(template) } }
                 Response.json(buildJsonObject { put("text", text) })
             }
+            "GET /api/memories" -> Response.json(memoryList())
+            "POST /api/memories" -> {
+                val body = json.parseToJsonElement(r.readBody()).jsonObject
+                memory.add(
+                    (body["text"] as? JsonPrimitive)?.content.orEmpty(),
+                    (body["person"] as? JsonPrimitive)?.content,
+                    "Weboberfläche",
+                )
+                Response.json(memoryList())
+            }
+            "POST /api/memories/update" -> {
+                val id = r.query["id"]?.toIntOrNull() ?: throw IllegalArgumentException("id fehlt")
+                val body = json.parseToJsonElement(r.readBody()).jsonObject
+                memory.edit(id, (body["text"] as? JsonPrimitive)?.content.orEmpty(), (body["person"] as? JsonPrimitive)?.content)
+                Response.json(memoryList())
+            }
+            "POST /api/memories/delete" -> {
+                memory.remove(r.query["id"]?.toIntOrNull() ?: throw IllegalArgumentException("id fehlt"))
+                Response.json(memoryList())
+            }
+            "GET /api/speakers" -> Response.json(speakerList())
+            "POST /api/speakers" -> {
+                val body = json.parseToJsonElement(r.readBody()).jsonObject
+                val name = (body["name"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalArgumentException("Name fehlt")
+                speakers.add(name, (body["calendar"] as? JsonPrimitive)?.content.orEmpty())
+                Response.json(speakerList())
+            }
+            "POST /api/speakers/update" -> {
+                val id = r.query["id"] ?: throw IllegalArgumentException("id fehlt")
+                val body = json.parseToJsonElement(r.readBody()).jsonObject
+                val current = speakers.get(id) ?: return Response.error(404, "Person nicht gefunden")
+                speakers.edit(
+                    id,
+                    (body["name"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: current.name,
+                    (body["calendar"] as? JsonPrimitive)?.content ?: current.calendar,
+                )
+                Response.json(speakerList())
+            }
+            "POST /api/speakers/delete" -> {
+                speakers.remove(r.query["id"] ?: throw IllegalArgumentException("id fehlt"))
+                Response.json(speakerList())
+            }
+            "POST /api/speakers/clear" -> {
+                speakers.clearSamples(r.query["id"] ?: throw IllegalArgumentException("id fehlt"))
+                Response.json(speakerList())
+            }
+            "POST /api/speakers/record" -> {
+                val id = r.query["id"] ?: throw IllegalArgumentException("id fehlt")
+                val sentence = (json.parseToJsonElement(r.readBody()).jsonObject["sentence"] as? JsonPrimitive)?.content.orEmpty()
+                val seconds = try {
+                    runBlocking { withContext(Dispatchers.Main) { controller.recordEnrollment(id, sentence) } }
+                } catch (e: IllegalStateException) {
+                    return Response.error(400, e.message ?: "Aufnahme fehlgeschlagen")
+                }
+                Response.json(buildJsonObject {
+                    put("speechSeconds", seconds)
+                    put("speakers", speakerList()["speakers"]!!)
+                })
+            }
+            "GET /api/ha/calendars" -> {
+                val calendars = runBlocking { withContext(Dispatchers.Main) { controller.listCalendars() } }
+                Response.json(buildJsonObject {
+                    put("calendars", buildJsonArray {
+                        calendars.forEach { (id, name) -> add(buildJsonObject { put("id", id); put("name", name) }) }
+                    })
+                })
+            }
             "POST /api/radio/search" -> {
                 val query = (json.parseToJsonElement(r.readBody()).jsonObject["query"] as? JsonPrimitive)?.content
                     ?: throw IllegalArgumentException("query fehlt")
@@ -293,6 +365,28 @@ class SettingsWebServer(
         }
     }
 
+    private fun memoryList() = buildJsonObject {
+        put("memories", buildJsonArray {
+            memory.memories.value.sortedByDescending { it.createdAt }.forEach { m ->
+                add(buildJsonObject {
+                    put("id", m.id); put("text", m.text); put("person", m.person ?: "")
+                    put("createdAt", m.createdAt); put("source", m.source ?: "")
+                })
+            }
+        })
+        put("people", buildJsonArray { speakers.profiles.value.forEach { add(JsonPrimitive(it.name)) } })
+    }
+
+    private fun speakerList() = buildJsonObject {
+        put("speakers", buildJsonArray {
+            speakers.profiles.value.forEach { p ->
+                add(buildJsonObject {
+                    put("id", p.id); put("name", p.name); put("calendar", p.calendar); put("samples", p.embeddings.size)
+                })
+            }
+        })
+    }
+
     /** Merges the posted fields into the current settings. Empty secrets mean "unchanged", null clears. */
     private fun updateSettings(patch: JsonObject) {
         val current = json.encodeToJsonElement(Settings.serializer(), settings.current).jsonObject.toMutableMap()
@@ -331,6 +425,7 @@ class SettingsWebServer(
                 put("hotwordError", status.hotwordError)
                 put("homeAssistant", status.homeAssistant)
                 put("homeContext", status.homeContext)
+                put("lastSpeaker", status.lastSpeaker)
                 radio.nowPlaying.value?.let { now ->
                     put("radio", if (now.artist == "Radio") now.title else "${now.artist}: ${now.title}")
                     put("radioPlaying", now.isPlaying)

@@ -139,6 +139,33 @@
     </section>
 
     <section>
+      <h2>Gedächtnis</h2>
+      <div class="hint">Was sich der Assistent gemerkt hat („Merk dir …“). Steht bei jedem Gespräch im Prompt; Einträge mit Person gelten nur für diese Person.</div>
+      <div id="memories" class="stations"></div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1 1 300px"><input id="newMemory" type="text" placeholder="z.B. Der Müll wird dienstags abgeholt"></div>
+        <div style="flex:0 0 160px"><select id="newMemoryPerson"></select></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="addMemory">Merken</button></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Personen (Stimmerkennung)</h2>
+      <div class="hint">Jede Person liest 3–5 Sätze am Echo Show vor (Aufnahme mit dem Gerätemikrofon, je 8 Sekunden). Gespeichert wird nur ein Stimmabdruck, keine Aufnahme; alles bleibt auf dem Gerät. „Meine Termine“ fragt dann den Kalender der erkannten Person, allgemeine Fragen alle Kalender.</div>
+      <label class="check"><input id="speakerRecognition" type="checkbox"> Stimmerkennung aktiv</label>
+      <div class="row">
+        <div><label>Schwelle (0.3 – 0.8, höher = vorsichtiger)</label><input id="speakerThreshold" type="number" min="0.3" max="0.8" step="0.05"></div>
+      </div>
+      <div class="status" id="lastSpeaker"></div>
+      <div id="speakers" class="stations"></div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1 1 200px"><input id="newSpeaker" type="text" placeholder="Name, z.B. Mona"></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="addSpeaker">Person anlegen</button></div>
+      </div>
+      <div id="enrollPanel" class="status hidden" style="font-size:16px; line-height:1.5"></div>
+    </section>
+
+    <section>
       <h2>Radio</h2>
       <div class="status" id="radioStatus"></div>
       <div class="hint">Deine Sender – Gemini kennt diese Namen („Spiel 1LIVE“). Unbekannte Sender sucht es selbst im Verzeichnis radio-browser.info und speichert sie hier.</div>
@@ -208,8 +235,8 @@
 const $ = id => document.getElementById(id);
 const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'haContextTemplate', 'wakeModel', 'defaultMusicService', 'spotifyDeviceName', 'spotifyClientId'];
 const NUMBER_INT = ['followUpSeconds', 'slideIntervalSeconds', 'nightStartHour', 'nightEndHour'];
-const NUMBER_FLOAT = ['wakeThreshold'];
-const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled', 'micMuted', 'haAllTools'];
+const NUMBER_FLOAT = ['wakeThreshold', 'speakerThreshold'];
+const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled', 'micMuted', 'haAllTools', 'speakerRecognition'];
 const SECRETS = ['geminiApiKey', 'haToken'];
 let pin = '';
 try { pin = localStorage.getItem('pin') || ''; } catch (e) {}
@@ -253,6 +280,7 @@ function render(data, fields = true) {
   $('wakePeakText').textContent = 'Spitze: ' + st.wakePeak.toFixed(2) + ' · Schwelle: ' + s.wakeThreshold.toFixed(2)
     + ' – Wake Word sagen und beobachten; liegt die Spitze knapp unter der Schwelle, Schwelle senken.';
   $('haStatus').textContent = st.homeAssistant;
+  $('lastSpeaker').textContent = 'Zuletzt erkannt: ' + (st.lastSpeaker || '–');
   $('radioStatus').textContent = st.radio ? (st.radioPlaying ? '▶ ' : '⏸ ') + st.radio : 'Radio aus';
   if (fields) renderStations(s.radioStations);
   $('homeContextStatus').textContent = 'Hausstatus: ' + st.homeContext;
@@ -305,6 +333,8 @@ async function load() {
     render(await api('GET', '/api/settings'));
     $('login').classList.add('hidden'); $('app').classList.remove('hidden');
     loadGallery(true).catch(() => {});
+    loadSpeakers().catch(() => {});
+    loadMemories().catch(() => {});
   } catch (e) { if (!$('app').classList.contains('hidden')) msg(e.message, 'err'); }
 }
 
@@ -435,6 +465,103 @@ $('radioSearch').onclick = () => run($('radioSearch'), async () => {
   }
   msg(r.results.length + ' Sender gefunden', 'ok');
 });
+// ---- People / voice enrollment
+const SENTENCES = [
+  'Guten Morgen! Heute scheint die Sonne, und ich trinke erst einmal einen großen Kaffee in der Küche.',
+  'Kannst du mir bitte sagen, welche Termine ich diese Woche habe und wann der Müll abgeholt wird?',
+  'Wir fahren am Wochenende zu den Großeltern, deshalb muss das Auto vorher noch aufgeladen werden.',
+  'Mein Lieblingsessen ist Pizza mit viel Käse, aber Spaghetti mit Tomatensoße mag ich auch sehr gerne.',
+  'Mach bitte das Licht im Wohnzimmer an und spiel ein bisschen ruhige Musik zum Entspannen.',
+  'Eins, zwei, drei, vier, fünf, sechs, sieben, acht, neun, zehn – jetzt zähle ich wieder rückwärts.',
+];
+let calendars = [];
+async function loadSpeakers() {
+  try { calendars = (await api('GET', '/api/ha/calendars')).calendars; } catch (e) { calendars = []; }
+  renderSpeakers((await api('GET', '/api/speakers')).speakers);
+}
+function renderSpeakers(list) {
+  const box = $('speakers');
+  box.innerHTML = '';
+  for (const p of list) {
+    const row = document.createElement('div');
+    row.className = 'station';
+    row.style.gridTemplateColumns = 'minmax(90px,1fr) minmax(140px,1.5fr) auto auto auto';
+    const name = document.createElement('input'); name.type = 'text'; name.value = p.name;
+    const cal = document.createElement('select');
+    cal.innerHTML = '<option value="">– kein persönlicher Kalender –</option>' +
+      calendars.map(c => '<option value="' + c.id + '">' + c.name + ' (' + c.id + ')</option>').join('');
+    if (p.calendar && !calendars.some(c => c.id === p.calendar)) cal.innerHTML += '<option value="' + p.calendar + '">' + p.calendar + '</option>';
+    cal.value = p.calendar;
+    const saveIt = async () => { renderSpeakers((await api('POST', '/api/speakers/update?id=' + p.id, { name: name.value, calendar: cal.value })).speakers); msg('Gespeichert', 'ok'); };
+    name.onchange = () => run(name, saveIt);
+    cal.onchange = () => run(cal, saveIt);
+    const rec = document.createElement('button'); rec.className = 'secondary';
+    rec.textContent = '● Aufnahme (' + p.samples + ')'; rec.title = 'Stimmprobe am Gerät aufnehmen';
+    rec.onclick = () => run(rec, async () => {
+      const sentence = SENTENCES[p.samples % SENTENCES.length];
+      const panel = $('enrollPanel');
+      panel.classList.remove('hidden');
+      panel.innerHTML = '<b></b><br>Steht auch auf dem Display. Aufnahme läuft 8 Sekunden …<br><i></i>';
+      panel.querySelector('b').textContent = p.name + ', bitte jetzt am Echo Show vorlesen:';
+      panel.querySelector('i').textContent = '„' + sentence + '“';
+      try {
+        const r = await api('POST', '/api/speakers/record?id=' + p.id, { sentence });
+        renderSpeakers(r.speakers);
+        msg('Stimmprobe gespeichert (' + r.speechSeconds.toFixed(1) + ' s Sprache)', 'ok');
+      } finally { panel.classList.add('hidden'); }
+    });
+    const clr = document.createElement('button'); clr.className = 'secondary icon-btn'; clr.textContent = '↺'; clr.title = 'Stimmproben löschen';
+    clr.onclick = () => run(clr, async () => { if (!confirm('Alle Stimmproben von ' + p.name + ' löschen?')) return; renderSpeakers((await api('POST', '/api/speakers/clear?id=' + p.id)).speakers); });
+    const del = document.createElement('button'); del.className = 'secondary icon-btn'; del.textContent = '×'; del.title = 'Person entfernen';
+    del.onclick = () => run(del, async () => { if (!confirm(p.name + ' entfernen?')) return; renderSpeakers((await api('POST', '/api/speakers/delete?id=' + p.id)).speakers); });
+    row.append(name, cal, rec, clr, del);
+    box.append(row);
+  }
+}
+$('addSpeaker').onclick = () => run($('addSpeaker'), async () => {
+  const n = $('newSpeaker').value.trim();
+  if (!n) return;
+  renderSpeakers((await api('POST', '/api/speakers', { name: n, calendar: '' })).speakers);
+  $('newSpeaker').value = '';
+  msg(n + ' angelegt – jetzt Kalender wählen und Stimmproben aufnehmen', 'ok');
+});
+// ---- Memory
+let memoryPeople = [];
+function personOptions(selected) {
+  return '<option value="">Haushalt</option>' + memoryPeople.map(n => '<option' + (n === selected ? ' selected' : '') + '>' + n + '</option>').join('') +
+    (selected && !memoryPeople.includes(selected) ? '<option selected>' + selected + '</option>' : '');
+}
+async function loadMemories() { renderMemories(await api('GET', '/api/memories')); }
+function renderMemories(r) {
+  memoryPeople = r.people;
+  $('newMemoryPerson').innerHTML = personOptions('');
+  const box = $('memories');
+  box.innerHTML = '';
+  if (!r.memories.length) { box.innerHTML = '<div class="hint">Noch nichts gemerkt.</div>'; return; }
+  for (const m of r.memories) {
+    const row = document.createElement('div');
+    row.className = 'station';
+    row.style.gridTemplateColumns = 'minmax(160px,3fr) minmax(90px,1fr) auto';
+    const text = document.createElement('input'); text.type = 'text'; text.value = m.text;
+    text.title = 'Gemerkt am ' + new Date(m.createdAt).toLocaleString('de-DE') + (m.source ? ' von ' + m.source : '');
+    const person = document.createElement('select'); person.innerHTML = personOptions(m.person);
+    const saveIt = async () => { renderMemories(await api('POST', '/api/memories/update?id=' + m.id, { text: text.value, person: person.value })); msg('Gespeichert', 'ok'); };
+    text.onchange = () => run(text, saveIt);
+    person.onchange = () => run(person, saveIt);
+    const del = document.createElement('button'); del.className = 'secondary icon-btn'; del.textContent = '×'; del.title = 'Vergessen';
+    del.onclick = () => run(del, async () => { renderMemories(await api('POST', '/api/memories/delete?id=' + m.id)); msg('Vergessen', 'ok'); });
+    row.append(text, person, del);
+    box.append(row);
+  }
+}
+$('addMemory').onclick = () => run($('addMemory'), async () => {
+  const t = $('newMemory').value.trim();
+  if (!t) return;
+  renderMemories(await api('POST', '/api/memories', { text: t, person: $('newMemoryPerson').value }));
+  $('newMemory').value = '';
+  msg('Gemerkt', 'ok');
+});
+$('newMemory').onkeydown = e => { if (e.key === 'Enter') $('addMemory').click(); };
 $('photos').onchange = e => run($('photos'), async () => {
   const files = Array.from(e.target.files);
   for (let i = 0; i < files.length; i++) {

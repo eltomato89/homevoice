@@ -70,6 +70,15 @@ class LiveProtocolTest {
     }
 
     @Test
+    fun contextMessageAddsTextWithoutCompletingTheTurn() {
+        val content = parse(LiveProtocol.contextMessage("Gerade spricht Mona."))["clientContent"]!!.jsonObject
+        assertEquals(JsonPrimitive(false), content["turnComplete"])
+        val turn = content["turns"]!!.jsonArray[0].jsonObject
+        assertEquals("user", turn["role"]!!.jsonPrimitive.content)
+        assertEquals("Gerade spricht Mona.", turn["parts"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun parsesSetupComplete() {
         assertEquals(listOf(ServerEvent.SetupComplete), LiveProtocol.parse("""{"setupComplete":{}}"""))
     }

@@ -15,6 +15,10 @@ import de.homevoice.assistant.gemini.ServerEvent
 import de.homevoice.assistant.gemini.SessionConfig
 import de.homevoice.assistant.mcp.HomeAssistantMcpClient
 import de.homevoice.assistant.media.MediaSessions
+import de.homevoice.assistant.memory.MemoryStore
+import de.homevoice.assistant.speaker.Identification
+import de.homevoice.assistant.speaker.SpeakerProfiles
+import de.homevoice.assistant.speaker.SpeakerRecognizer
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.timer.TimerManager
@@ -24,7 +28,10 @@ import de.homevoice.assistant.tools.loadHomeAssistantTools
 import de.homevoice.assistant.tools.renderHomeAssistantTemplate
 import de.homevoice.assistant.wakeword.WakeWordDetector
 import de.homevoice.wakeword.SileroVad
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +62,10 @@ data class AssistantStatus(
     val hotwordError: String? = null,
     val homeAssistant: String = "nicht konfiguriert",
     val homeContext: String = "aus",
+    /** Voice enrollment in progress: person's name and the sentence to read (shown on the display). */
+    val enrollment: Pair<String, String>? = null,
+    /** Last speaker recognition result, for tuning in the web interface. */
+    val lastSpeaker: String = "",
     val error: String? = null,
     val userText: String = "",
     val modelText: String = "",
@@ -70,6 +81,9 @@ class ConversationController(
     private val timers: TimerManager,
     private val tools: ToolRegistry,
     private val media: MediaSessions,
+    private val profiles: SpeakerProfiles,
+    private val speakers: SpeakerRecognizer,
+    private val memory: MemoryStore,
     private val wsHttp: OkHttpClient,
     private val restHttp: OkHttpClient,
     private val scope: CoroutineScope,
@@ -246,7 +260,13 @@ class ConversationController(
     private fun onFrame(frame: ShortArray) {
         val s = session
         if (s == null) {
-            if (wake.process(frame)) scope.launch { onWakeWord() }
+            enrollFrames?.let { collectEnrollment(frame, it); return }
+            preRoll.addLast(frame)
+            if (preRoll.size > PREROLL_FRAMES) preRoll.removeFirst()
+            if (wake.process(frame)) {
+                identifyWakeWord()
+                scope.launch { onWakeWord() }
+            }
             return
         }
         if (settings.halfDuplex && output.isPlaying) {
@@ -283,6 +303,187 @@ class ConversationController(
             return
         }
         if (probability > VAD_THRESHOLD) lastSpeechAt = System.currentTimeMillis()
+        trackUtterance(frame, probability > VAD_THRESHOLD)
+    }
+
+    // ---- Speaker recognition (on-device) ------------------------------------------------------
+
+    /** Last ~2 s of audio while idle, so the wake word itself can be used to recognize the speaker. */
+    private val preRoll = ArrayDeque<ShortArray>()
+    /** Speaker recognized from the wake word; awaited (briefly) before the session setup is sent. */
+    @Volatile private var wakeIdentification: CompletableDeferred<Identification?>? = null
+
+    /** Audio thread, at wake word detection: identify the speaker from "Alexa" while connecting. */
+    private fun identifyWakeWord() {
+        val v = vad
+        if (!speakerRecognitionReady() || v == null) {
+            wakeIdentification = null
+            synchronized(utteranceLock) { utterance.clear() }
+            return
+        }
+        v.reset()
+        val speech = preRoll.filter { f -> runCatching { v.process(f) }.getOrDefault(0f) > ENROLL_VAD_THRESHOLD }
+        preRoll.clear()
+        vadResetPending = true
+        // The wake word starts the first utterance, so even a short question has enough material.
+        synchronized(utteranceLock) {
+            utterance.clear()
+            utterance.addAll(speech)
+            utteranceIdentified = false
+        }
+        val deferred = CompletableDeferred<Identification?>()
+        wakeIdentification = deferred
+        if (speech.size < MIN_IDENTIFY_FRAMES / 2) {
+            deferred.complete(null)
+            return
+        }
+        val pcm = concat(speech)
+        scope.launch(Dispatchers.Default) {
+            deferred.complete(runCatching { speakers.identify(pcm, settings.speakerThreshold) }.getOrNull())
+        }
+    }
+
+    private fun speakerRecognitionReady() =
+        settings.speakerRecognition && profiles.profiles.value.any { it.embeddings.isNotEmpty() }
+
+    private fun concat(frames: List<ShortArray>): ShortArray {
+        val pcm = ShortArray(frames.size * WakeWordDetector.FRAME_LENGTH)
+        frames.forEachIndexed { i, f -> f.copyInto(pcm, i * WakeWordDetector.FRAME_LENGTH) }
+        return pcm
+    }
+
+    private val utteranceLock = Any()
+    /** Speech of the previous utterance, for the who_is_speaking tool. */
+    private var lastUtterance: List<ShortArray> = emptyList()
+
+    /** Name of the speaker the model was last told about in this session, if any. */
+    fun currentSpeakerName(): String? = currentSpeakerId?.let { profiles.get(it)?.name }
+
+    /** Identifies whoever spoke last (whole last utterance). Used by the who_is_speaking tool. */
+    suspend fun identifyCurrentSpeaker(): Identification {
+        val frames = synchronized(utteranceLock) { if (utterance.size >= MIN_IDENTIFY_FRAMES) utterance.toList() else lastUtterance }
+        check(speakerRecognitionReady()) { "Die Stimmerkennung ist nicht eingerichtet" }
+        check(frames.size >= MIN_IDENTIFY_FRAMES / 2) { "Zu wenig Sprache für eine Stimmerkennung" }
+        val result = withContext(Dispatchers.Default) { speakers.identify(concat(frames), settings.speakerThreshold) }
+        session?.let { onIdentified(it, result, notify = false) }
+        return result
+    }
+
+    /** Speech frames of the current utterance (audio thread; guarded by [utteranceLock]). */
+    private val utterance = ArrayList<ShortArray>()
+    private var silentFrames = 0
+    private var utteranceIdentified = false
+    /** Person the model was last told about in this session. */
+    @Volatile private var currentSpeakerId: String? = null
+
+    private fun trackUtterance(frame: ShortArray, speech: Boolean) {
+        if (!speakerRecognitionReady()) return
+        var toIdentify: List<ShortArray>? = null
+        synchronized(utteranceLock) {
+            if (speech) {
+                utterance += frame
+                silentFrames = 0
+            } else if (++silentFrames > UTTERANCE_GAP_FRAMES && utterance.isNotEmpty()) {
+                // A pause ends the utterance. Short ones are identified now; the next utterance is
+                // identified again (another person may speak).
+                if (!utteranceIdentified && utterance.size >= MIN_IDENTIFY_FRAMES) toIdentify = utterance.toList()
+                lastUtterance = utterance.toList()
+                utterance.clear()
+                utteranceIdentified = false
+            }
+            if (!utteranceIdentified && utterance.size >= IDENTIFY_FRAMES) {
+                utteranceIdentified = true
+                toIdentify = utterance.toList()
+            }
+        }
+        val frames = toIdentify ?: return
+        run {
+            val pcm = concat(frames)
+            val live = session ?: return
+            scope.launch(Dispatchers.Default) {
+                val started = System.currentTimeMillis()
+                val result = try {
+                    speakers.identify(pcm, settings.speakerThreshold).also {
+                        Log.d(TAG, "Speaker recognition took ${System.currentTimeMillis() - started} ms")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Speaker recognition failed", e)
+                    return@launch
+                }
+                withContext(Dispatchers.Main) { onIdentified(live, result) }
+            }
+        }
+    }
+
+    private fun onIdentified(live: GeminiLiveSession, result: Identification, notify: Boolean = true) {
+        if (result.scores.isEmpty()) return
+        val summary = (result.profile?.name ?: "unbekannt") + " · " +
+            result.scores.joinToString { (n, s) -> "$n %.2f".format(s) }
+        Log.i(TAG, "Speaker: $summary")
+        _status.update { it.copy(lastSpeaker = summary) }
+        if (session !== live || !notify) {
+            result.profile?.let { currentSpeakerId = it.id }
+            return
+        }
+        val profile = result.profile
+        when {
+            profile != null && profile.id != currentSpeakerId -> {
+                currentSpeakerId = profile.id
+                live.sendContext(
+                    "[Systemhinweis der Stimmerkennung, nicht vorlesen: Gerade spricht ${profile.name}." +
+                        (if (profile.calendar.isNotBlank()) " Persönlicher Kalender: ${profile.calendar}." else "") + "]"
+                )
+            }
+            profile == null && currentSpeakerId != null -> {
+                currentSpeakerId = null
+                live.sendContext("[Systemhinweis der Stimmerkennung, nicht vorlesen: Der aktuelle Sprecher ist nicht sicher erkannt.]")
+            }
+        }
+    }
+
+    /** Frames recorded for a voice enrollment (audio thread adds, main thread takes). */
+    @Volatile private var enrollFrames: MutableList<ShortArray>? = null
+
+    private fun collectEnrollment(frame: ShortArray, frames: MutableList<ShortArray>) {
+        val v = vad ?: return
+        if (vadResetPending) { v.reset(); vadResetPending = false }
+        val probability = try { v.process(frame) } catch (_: Exception) { 0f }
+        if (probability > ENROLL_VAD_THRESHOLD) synchronized(frames) { frames += frame }
+    }
+
+    /**
+     * Records [seconds] of the person reading [sentence] near the device and stores the voice
+     * print. Returns how many seconds of speech were used.
+     */
+    suspend fun recordEnrollment(profileId: String, sentence: String, seconds: Int = 8): Float {
+        val profile = profiles.get(profileId) ?: throw IllegalArgumentException("Person nicht gefunden")
+        check(session == null) { "Gerade läuft ein Gespräch" }
+        check(!settings.micMuted) { "Das Mikrofon ist ausgeschaltet" }
+        check(enrollFrames == null) { "Es läuft schon eine Aufnahme" }
+        val frames = mutableListOf<ShortArray>()
+        _status.update { it.copy(enrollment = profile.name to sentence) }
+        earcons.play(Earcons.Tone.WAKE)
+        delay(400) // let the tone fade before recording
+        vadResetPending = true
+        enrollFrames = frames
+        try {
+            delay(seconds * 1000L)
+        } finally {
+            enrollFrames = null
+            _status.update { it.copy(enrollment = null) }
+            earcons.play(Earcons.Tone.END)
+        }
+        val speech = synchronized(frames) { frames.toList() }
+        val speechSeconds = speech.size * WakeWordDetector.FRAME_LENGTH / AudioInput.SAMPLE_RATE.toFloat()
+        if (speechSeconds < MIN_ENROLL_SECONDS) {
+            throw IllegalStateException("Zu wenig Sprache erkannt (%.1f s) – bitte näher ans Gerät und lauter lesen".format(speechSeconds))
+        }
+        val pcm = ShortArray(speech.size * WakeWordDetector.FRAME_LENGTH)
+        speech.forEachIndexed { i, f -> f.copyInto(pcm, i * WakeWordDetector.FRAME_LENGTH) }
+        val embedding = withContext(Dispatchers.Default) { speakers.embed(pcm) }
+        profiles.addSample(profileId, embedding)
+        Log.i(TAG, "Voice sample for ${profile.name}: %.1f s speech".format(speechSeconds))
+        return speechSeconds
     }
 
     // ---- Session lifecycle (main thread) --------------------------------------------------------
@@ -330,7 +531,19 @@ class ConversationController(
             systemInstruction = systemInstruction(s),
             functionDeclarations = tools.declarations(),
         )
-        val live = GeminiLiveSession(wsHttp, s.geminiApiKey.trim(), config)
+        val pendingSpeaker = wakeIdentification
+        wakeIdentification = null
+        val live = GeminiLiveSession(wsHttp, s.geminiApiKey.trim(), config) { cfg ->
+            // Runs on the socket thread once connected; recognition usually finished by then.
+            val hint = pendingSpeaker?.let { d ->
+                runBlocking { withTimeoutOrNull(WAKE_ID_WAIT_MS) { d.await() } }
+            }
+            hint?.let { id ->
+                Log.i(TAG, "Speaker from wake word: ${id.profile?.name ?: "unbekannt"} " + id.scores.joinToString { (n, v) -> "$n %.2f".format(v) })
+                id.profile?.let { currentSpeakerId = it.id }
+            }
+            if (hint?.profile != null) cfg.copy(systemInstruction = systemInstruction(s, hint)) else cfg
+        }
         synchronized(bufferLock) {
             preBuffer.reset()
             chunk.reset()
@@ -338,6 +551,7 @@ class ConversationController(
         }
         endRequestedAt = 0L
         awaitingResponseSince = 0L
+        currentSpeakerId = null
         lastSpeechAt = 0L
         vadResetPending = true
         muteModelAudio = false
@@ -523,7 +737,7 @@ class ConversationController(
         lastActivity = System.currentTimeMillis()
     }
 
-    private fun systemInstruction(s: Settings): String = buildString {
+    private fun systemInstruction(s: Settings, wakeSpeaker: Identification? = null): String = buildString {
         append(s.systemPrompt.trim())
         append("\n\nAktuelles Datum und Uhrzeit: ")
         val now = ZonedDateTime.now()
@@ -539,6 +753,26 @@ class ConversationController(
         if (tools.groupSize(HA_GROUP) == 0) {
             append("\nDie Smart-Home-Steuerung ist gerade nicht verfügbar.")
         }
+        val household = profiles.profiles.value
+        if (s.speakerRecognition && household.any { it.embeddings.isNotEmpty() }) {
+            append("\n\nHaushalt (Stimmerkennung): ")
+            append(household.joinToString { p -> p.name + (if (p.calendar.isNotBlank()) " – Kalender ${p.calendar}" else "") })
+            append(".\nDie Stimmerkennung schickt Systemhinweise, wer gerade spricht. \"Ich\", \"mein\", \"für mich\" ")
+            append("beziehen sich auf diese Person (z.B. \"meine Termine\" = nur ihr persönlicher Kalender). ")
+            append("Allgemeine Fragen wie \"Was steht heute an?\" beziehen ALLE Kalender ein (Familienkalender und alle persönlichen). ")
+            append("Bei \"Wer bin ich?\" oder persönlichen Fragen ohne sicheren Hinweis: who_is_speaking aufrufen; ")
+            append("erst wenn das niemanden erkennt, kurz nachfragen. Die Hinweise nie vorlesen.")
+            wakeSpeaker?.profile?.let { p ->
+                append("\nSprecher laut Stimmerkennung beim Hotword (vorläufig): ${p.name}")
+                if (p.calendar.isNotBlank()) append(" – persönlicher Kalender ${p.calendar}")
+                append(".")
+            }
+        }
+        append("\n\n# Gedächtnis\n")
+        append("Merke dir mit remember, was der Nutzer dir sagt, dass du es dir merken sollst, und dauerhafte Vorlieben ")
+        append("oder Fakten über den Haushalt (kurz bestätigen). Mit forget löschen, wenn etwas nicht mehr stimmt. ")
+        append("Einträge mit Namen in Klammern gelten nur für diese Person.\n")
+        append(memory.promptSection() ?: "(noch nichts gemerkt)")
         if (s.radioStations.isNotEmpty()) {
             append("\nGespeicherte Radiosender (für play_radio genau diesen Namen verwenden): ")
             append(s.radioStations.joinToString { it.name })
@@ -574,6 +808,18 @@ class ConversationController(
             "Fehler: ${e.message ?: e.javaClass.simpleName}"
         }
         _status.update { it.copy(homeContext = message) }
+    }
+
+    /** Calendar entities in Home Assistant as (entity_id, name), for assigning them to people. */
+    suspend fun listCalendars(): List<Pair<String, String>> {
+        val client = haClient ?: throw IllegalStateException("Home Assistant ist nicht verbunden")
+        val text = renderHomeAssistantTemplate(
+            client,
+            "{% for s in states.calendar %}{{ s.entity_id }}|{{ s.name }}\n{% endfor %}",
+        )
+        return text.lines().mapNotNull { line ->
+            line.split('|', limit = 2).takeIf { it.size == 2 && it[0].startsWith("calendar.") }?.let { it[0].trim() to it[1].trim() }
+        }
     }
 
     /** Renders [template] without saving it (preview in the web interface). */
@@ -615,6 +861,17 @@ class ConversationController(
         const val MAX_SESSION_MS = 10 * 60_000L
         const val END_GRACE_MS = 600L
         const val VAD_THRESHOLD = 0.5f
+        const val ENROLL_VAD_THRESHOLD = 0.35f
+        const val MIN_ENROLL_SECONDS = 2.5f
+        /** ~1 s of speech (512-sample frames) before identifying the speaker mid-utterance. */
+        const val IDENTIFY_FRAMES = 31
+        /** ~0.6 s: shortest utterance worth identifying at its end. */
+        const val MIN_IDENTIFY_FRAMES = 19
+        /** ~2 s of audio kept while idle (contains the wake word). */
+        const val PREROLL_FRAMES = 62
+        const val WAKE_ID_WAIT_MS = 800L
+        /** ~0.8 s pause ends an utterance. */
+        const val UTTERANCE_GAP_FRAMES = 25
         const val END_HARD_LIMIT_MS = 15_000L
         const val RESPONSE_WAIT_MS = 10_000L
         const val TOOL_MAX_MS = 30_000L
