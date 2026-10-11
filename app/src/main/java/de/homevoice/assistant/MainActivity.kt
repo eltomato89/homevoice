@@ -1,11 +1,9 @@
 package de.homevoice.assistant
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.provider.Settings as AndroidSettings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -17,7 +15,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -27,7 +24,6 @@ import de.homevoice.assistant.service.AssistantService
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.slideshow.Photo
 import de.homevoice.assistant.ui.HomeScreen
-import de.homevoice.assistant.ui.SettingsScreen
 import de.homevoice.assistant.ui.theme.HomeVoiceTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -55,7 +51,7 @@ class MainActivity : ComponentActivity() {
                 val ringing by container.timerManager.ringing.collectAsStateWithLifecycle()
                 val nowPlaying by container.mediaSessions.nowPlaying.collectAsStateWithLifecycle()
                 val scope = rememberCoroutineScope()
-                var showSettings by rememberSaveable { mutableStateOf(false) }
+                var showSetupCard by remember { mutableStateOf(false) }
                 var rescan by remember { mutableStateOf(0) }
 
                 val photoVersion by container.photos.version.collectAsStateWithLifecycle()
@@ -80,37 +76,34 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler { if (showSettings) showSettings = false } // launcher: back does nothing on home
-
-                if (showSettings) {
-                    SettingsScreen(
-                        initial = settings,
-                        status = status,
-                        photoCount = photos.size,
-                        setupHint = setupHint(webUrl),
-                        onSave = { saved -> container.settings.update { saved } },
-                        onTestHomeAssistant = { container.controller.refreshHomeAssistantTools() },
-                        onClose = { showSettings = false; hideSystemBars() },
-                        onOpenSystemSettings = { startActivity(Intent(AndroidSettings.ACTION_SETTINGS)) },
-                        onChooseLauncher = { startActivity(Intent(AndroidSettings.ACTION_HOME_SETTINGS)) },
-                    )
-                } else {
-                    HomeScreen(
-                        settings = settings,
-                        status = status,
-                        photos = photos,
-                        timers = timers,
-                        ringing = ringing,
-                        night = night,
-                        setupHint = setupHint(webUrl).takeIf { settings.geminiApiKey.isBlank() },
-                        nowPlaying = nowPlaying,
-                        onMediaAction = { action ->
-                            scope.launch { runCatching { container.music.control(action) } }
-                        },
-                        onTap = { container.controller.toggle() },
-                        onLongPress = { showSettings = true },
-                    )
+                // Launcher: back does nothing. There are deliberately no settings on the device
+                // itself (it stands in the open); long-press only shows where to configure it.
+                BackHandler { }
+                LaunchedEffect(showSetupCard) {
+                    if (showSetupCard) {
+                        delay(SETUP_CARD_MS)
+                        showSetupCard = false
+                    }
                 }
+
+                HomeScreen(
+                    settings = settings,
+                    status = status,
+                    photos = photos,
+                    timers = timers,
+                    ringing = ringing,
+                    night = night,
+                    setupHint = setupHint(webUrl).takeIf { settings.geminiApiKey.isBlank() },
+                    setupCard = if (showSetupCard) webUrl to container.settings.webPin else null,
+                    nowPlaying = nowPlaying,
+                    onMediaAction = { action ->
+                        scope.launch { runCatching { container.music.control(action) } }
+                    },
+                    onTap = {
+                        if (showSetupCard) showSetupCard = false else container.controller.toggle()
+                    },
+                    onLongPress = { showSetupCard = true },
+                )
             }
         }
     }
@@ -152,5 +145,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val PHOTO_RESCAN_MS = 60 * 60_000L
+        const val SETUP_CARD_MS = 20_000L
     }
 }

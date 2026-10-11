@@ -32,7 +32,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -92,6 +94,8 @@ fun HomeScreen(
     ringing: List<TimerEntry>,
     night: Boolean,
     setupHint: String?,
+    /** Web address (null without network) and PIN, shown after a long press. */
+    setupCard: Pair<String?, String>?,
     nowPlaying: NowPlaying?,
     onMediaAction: (String) -> Unit,
     onTap: () -> Unit,
@@ -99,7 +103,7 @@ fun HomeScreen(
 ) {
     val scale = (LocalConfiguration.current.screenHeightDp / 420f).coerceIn(0.8f, 1.5f)
     CompositionLocalProvider(LocalUiScale provides scale) {
-        HomeContent(settings, status, photos, timers, ringing, night, setupHint, nowPlaying, onMediaAction, onTap, onLongPress)
+        HomeContent(settings, status, photos, timers, ringing, night, setupHint, setupCard, nowPlaying, onMediaAction, onTap, onLongPress)
     }
 }
 
@@ -112,6 +116,7 @@ private fun HomeContent(
     ringing: List<TimerEntry>,
     night: Boolean,
     setupHint: String?,
+    setupCard: Pair<String?, String>?,
     nowPlaying: NowPlaying?,
     onMediaAction: (String) -> Unit,
     onTap: () -> Unit,
@@ -184,6 +189,14 @@ private fun HomeContent(
 
         LightBar(status.state, modifier = Modifier.align(Alignment.BottomCenter))
 
+        AnimatedVisibility(
+            visible = setupCard != null,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            setupCard?.let { (url, pin) -> SetupCard(url, pin) }
+        }
+
         AnimatedVisibility(visible = ringing.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
             AlarmOverlay(ringing)
         }
@@ -214,9 +227,17 @@ private fun Slideshow(photos: List<Photo>, intervalSeconds: Int) {
 
     Crossfade(targetState = photos[index % photos.size], animationSpec = tween(1500), label = "slideshow") { photo ->
         val painter = rememberAsyncImagePainter(request(photo.uri))
-        val progress = remember(photo) { Animatable(0f) }
+        // The move is slow, so ~25 fps look the same as 60 but cost far less on this small device.
+        var progress by remember(photo) { mutableFloatStateOf(0f) }
         LaunchedEffect(photo) {
-            progress.animateTo(1f, tween((interval + 1500).toInt(), easing = EaseInOutSine))
+            val duration = (interval + 1500).toFloat()
+            val start = withFrameMillis { it }
+            while (true) {
+                val t = ((withFrameMillis { it } - start) / duration).coerceAtMost(1f)
+                progress = EaseInOutSine.transform(t)
+                if (t >= 1f) break
+                delay(KEN_BURNS_FRAME_MS)
+            }
         }
         Canvas(Modifier.fillMaxSize()) {
             val image = painter.intrinsicSize
@@ -225,7 +246,7 @@ private fun Slideshow(photos: List<Photo>, intervalSeconds: Int) {
             val viewAspect = size.width / size.height
             // Ken Burns move planned around the detected faces (random direction per photo).
             val shot = shotCache.getOrPut(photo) { ShotPlanner.plan(imageAspect, viewAspect, photo.faces) }
-            val window = shot.window(progress.value, imageAspect, viewAspect)
+            val window = shot.window(progress, imageAspect, viewAspect)
             val scale = size.width / (window.width * image.width)
             translate(-window.left * image.width * scale, -window.top * image.height * scale) {
                 with(painter) { draw(Size(image.width * scale, image.height * scale)) }
@@ -233,6 +254,8 @@ private fun Slideshow(photos: List<Photo>, intervalSeconds: Int) {
         }
     }
 }
+
+private const val KEN_BURNS_FRAME_MS = 40L
 
 /** One planned camera move per photo and display, so recomposition does not re-roll it. */
 private val shotCache = object : LinkedHashMap<Photo, Shot>(16, 0.75f, true) {
@@ -324,7 +347,7 @@ private fun StatusHint(status: AssistantStatus, setupHint: String?, photosEmpty:
         status.error?.takeIf { status.state == AssistantState.ERROR }?.let { add(it) }
         status.hotwordError?.let { add(it) }
         if (!status.running && status.error == null) add("Assistent gestoppt")
-        if (photosEmpty) add("Lange tippen für Einstellungen")
+        if (photosEmpty) add("Fotos über die Einrichtung im Browser hochladen")
     }
     if (lines.isEmpty()) return
     Column(
@@ -373,6 +396,8 @@ private fun Transcript(status: AssistantStatus, modifier: Modifier) {
 /** Echo-style glowing bar at the bottom edge showing the assistant state. */
 @Composable
 private fun LightBar(state: AssistantState, modifier: Modifier) {
+    // Return before creating the infinite transition, otherwise it animates every frame while idle.
+    if (state == AssistantState.IDLE) return
     val color = when (state) {
         AssistantState.IDLE -> Color.Transparent
         AssistantState.CONNECTING -> Palette.Connecting
@@ -391,7 +416,6 @@ private fun LightBar(state: AssistantState, modifier: Modifier) {
         animationSpec = infiniteRepeatable(tween(period), RepeatMode.Reverse),
         label = "pulseAlpha",
     )
-    if (state == AssistantState.IDLE) return
     Box(
         modifier
             .fillMaxWidth()
@@ -399,6 +423,22 @@ private fun LightBar(state: AssistantState, modifier: Modifier) {
             .alpha(pulse)
             .background(Brush.verticalGradient(listOf(Color.Transparent, color.copy(alpha = 0.55f), color)))
     )
+}
+
+/** Where to configure the device; settings themselves are only available in the browser. */
+@Composable
+private fun SetupCard(url: String?, pin: String) {
+    Column(
+        Modifier
+            .background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(24.sdp))
+            .padding(horizontal = 40.sdp, vertical = 28.sdp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.sdp),
+    ) {
+        Text("Einrichtung im Browser", color = Color.White.copy(alpha = 0.75f), fontSize = 22.ssp)
+        Text(url ?: "Kein WLAN verbunden", color = Color.White, fontSize = 32.ssp, fontWeight = FontWeight.Medium)
+        Text("PIN  $pin", color = Palette.Listening, fontSize = 36.ssp, fontWeight = FontWeight.Medium, letterSpacing = 4.ssp)
+    }
 }
 
 @Composable
