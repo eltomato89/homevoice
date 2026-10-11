@@ -90,6 +90,7 @@
       <div class="row">
         <div><label>Nachlaufzeit nach Antwort (Sekunden)</label><input id="followUpSeconds" type="number" min="3" max="60"></div>
       </div>
+      <label class="check"><input id="googleSearch" type="checkbox"> Google-Suche für aktuelle Informationen (benötigt Abrechnung in AI Studio; 5.000 Suchen/Monat frei)</label>
       <label class="check"><input id="micMuted" type="checkbox"> Mikrofon aus (wie die Taste oben rechts am Gerät)</label>
       <label class="check"><input id="halfDuplex" type="checkbox"> Halbduplex – Mikro stumm während Gemini spricht, unterbrechen per Hotword</label>
       <label class="check"><input id="communicationAudioMode" type="checkbox"> Kommunikations-Audiomodus (für Geräte mit Echo-Unterdrückung)</label>
@@ -136,6 +137,20 @@
         <div style="flex:1 1 400px"><input id="spotifyCallback" type="text" autocomplete="off"></div>
         <div style="flex:0 0 auto"><button class="secondary" id="spotifyFinish">Übernehmen</button></div>
       </div>
+    </section>
+
+    <section>
+      <h2>Jobs (Erinnerungen &amp; geplante Aktionen)</h2>
+      <div class="hint">Per Sprache anlegen („Erinnere mich morgen um 10 …“, „Schick mir werktags um 7 das Wetter aufs iPhone“, „Sag Bescheid, wenn die Spülmaschine fertig ist“) oder hier. Ausgeführt von HomeVoice mit Gemini Flash; Ereignisse prüft HomeVoice minütlich lokal in Home Assistant.</div>
+      <div id="tasks" class="stations"></div>
+      <label>Neuer Job</label>
+      <div class="row">
+        <div style="flex:1 1 300px"><input id="newTaskPrompt" type="text" placeholder="z.B. Erinnere Jens per Durchsage an den Zahnarzttermin"></div>
+        <div style="flex:0 0 200px"><input id="newTaskAt" type="datetime-local"></div>
+        <div style="flex:0 0 130px"><select id="newTaskRepeat"><option value="none">einmalig</option><option value="daily">täglich</option><option value="weekdays">werktags</option><option value="weekly">wöchentlich</option></select></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="addTask">Anlegen</button></div>
+      </div>
+      <div class="row"><div><label>Modell für Jobs</label><input id="taskModel" type="text"></div></div>
     </section>
 
     <section>
@@ -233,10 +248,10 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'haContextTemplate', 'wakeModel', 'defaultMusicService', 'spotifyDeviceName', 'spotifyClientId'];
+const TEXT = ['model', 'taskModel', 'voice', 'systemPrompt', 'haUrl', 'haContextTemplate', 'wakeModel', 'defaultMusicService', 'spotifyDeviceName', 'spotifyClientId'];
 const NUMBER_INT = ['followUpSeconds', 'slideIntervalSeconds', 'nightStartHour', 'nightEndHour'];
 const NUMBER_FLOAT = ['wakeThreshold', 'speakerThreshold'];
-const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled', 'micMuted', 'haAllTools', 'speakerRecognition'];
+const BOOL = ['googleSearch', 'halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled', 'micMuted', 'haAllTools', 'speakerRecognition'];
 const SECRETS = ['geminiApiKey', 'haToken'];
 let pin = '';
 try { pin = localStorage.getItem('pin') || ''; } catch (e) {}
@@ -335,6 +350,7 @@ async function load() {
     loadGallery(true).catch(() => {});
     loadSpeakers().catch(() => {});
     loadMemories().catch(() => {});
+    loadTasks().catch(() => {});
   } catch (e) { if (!$('app').classList.contains('hidden')) msg(e.message, 'err'); }
 }
 
@@ -562,6 +578,33 @@ $('addMemory').onclick = () => run($('addMemory'), async () => {
   msg('Gemerkt', 'ok');
 });
 $('newMemory').onkeydown = e => { if (e.key === 'Enter') $('addMemory').click(); };
+// ---- Scheduled jobs
+async function loadTasks() { renderTasks(await api('GET', '/api/tasks')); }
+function renderTasks(r) {
+  const box = $('tasks');
+  box.innerHTML = '';
+  if (!r.tasks.length) { box.innerHTML = '<div class="hint">Keine Jobs geplant.</div>'; return; }
+  for (const t of r.tasks) {
+    const row = document.createElement('div');
+    row.className = 'station result';
+    const info = document.createElement('div');
+    info.innerHTML = '<b></b><br><span class="meta"></span>';
+    info.querySelector('b').textContent = t.prompt;
+    info.querySelector('.meta').textContent = [t.when, t.by ? 'von ' + t.by : '', t.condition ? 'Bedingung: ' + t.condition : '',
+      t.lastResult ? 'Zuletzt: ' + t.lastResult : ''].filter(Boolean).join(' · ');
+    const runBtn = document.createElement('button'); runBtn.className = 'secondary icon-btn'; runBtn.textContent = '▶'; runBtn.title = 'Jetzt ausführen';
+    runBtn.onclick = () => run(runBtn, async () => { msg('Job läuft …'); const res = await api('POST', '/api/tasks/run?id=' + t.id); renderTasks(res); msg('Ergebnis: ' + res.result, 'ok'); });
+    const del = document.createElement('button'); del.className = 'secondary icon-btn'; del.textContent = '×'; del.title = 'Löschen';
+    del.onclick = () => run(del, async () => { renderTasks(await api('POST', '/api/tasks/delete?id=' + t.id)); msg('Job gelöscht', 'ok'); });
+    row.append(info, runBtn, del);
+    box.append(row);
+  }
+}
+$('addTask').onclick = () => run($('addTask'), async () => {
+  renderTasks(await api('POST', '/api/tasks', { prompt: $('newTaskPrompt').value, at: $('newTaskAt').value, repeat: $('newTaskRepeat').value }));
+  $('newTaskPrompt').value = '';
+  msg('Job angelegt', 'ok');
+});
 $('photos').onchange = e => run($('photos'), async () => {
   const files = Array.from(e.target.files);
   for (let i = 0; i < files.length; i++) {

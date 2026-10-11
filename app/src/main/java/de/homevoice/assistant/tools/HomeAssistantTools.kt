@@ -23,7 +23,7 @@ val SAFE_HA_MCP_TOOLS = setOf(
     "ha_get_state", "ha_search", "ha_call_service", "ha_bulk_control", "ha_get_operation_status",
     "ha_get_history", "ha_get_overview", "ha_list_floors_areas", "ha_get_zone", "ha_eval_template",
     "ha_config_get_calendar_events", "ha_config_set_calendar_event",
-    "ha_get_todo", "ha_set_todo_item", "ha_remove_todo_item",
+    "ha_get_todo", "ha_set_todo_item", "ha_remove_todo_item", "ha_list_services",
 )
 
 /** Loads the Home Assistant MCP tools and exposes them as Gemini tools with an "ha_" prefix. */

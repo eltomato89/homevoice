@@ -33,6 +33,10 @@ data class Settings(
     val geminiApiKey: String = "",
     val model: String = DEFAULT_MODEL,
     val voice: String = DEFAULT_VOICE,
+    /** Let Gemini search Google for current information (needs a billed API key; 5,000 searches/month free). */
+    val googleSearch: Boolean = true,
+    /** Gemini text model for scheduled jobs (runs without a conversation). */
+    val taskModel: String = "gemini-3.8-flash",
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
     /** Seconds of silence after the model finished speaking before the session is closed. */
     val followUpSeconds: Int = 5,
@@ -105,6 +109,8 @@ class SettingsRepository(context: Context) {
             geminiApiKey = prefs.getString("geminiApiKey", d.geminiApiKey)!!,
             model = prefs.getString("model", d.model)!!,
             voice = prefs.getString("voice", d.voice)!!,
+            taskModel = prefs.getString("taskModel", d.taskModel)!!,
+            googleSearch = prefs.getBoolean("googleSearch", d.googleSearch),
             systemPrompt = prefs.getString("systemPrompt", d.systemPrompt)!!,
             followUpSeconds = prefs.getInt("followUpSeconds", d.followUpSeconds),
             // Without hardware echo cancellation the model would hear (and interrupt) itself.
@@ -140,6 +146,8 @@ class SettingsRepository(context: Context) {
             .putString("geminiApiKey", s.geminiApiKey)
             .putString("model", s.model)
             .putString("voice", s.voice)
+            .putString("taskModel", s.taskModel)
+            .putBoolean("googleSearch", s.googleSearch)
             .putString("systemPrompt", s.systemPrompt)
             .putInt("followUpSeconds", s.followUpSeconds)
             .putBoolean("halfDuplex", s.halfDuplex)

@@ -22,6 +22,10 @@ import de.homevoice.assistant.tools.musicTools
 import de.homevoice.assistant.tools.radioTools
 import de.homevoice.assistant.tools.speakerTools
 import de.homevoice.assistant.tools.memoryTools
+import de.homevoice.assistant.tools.taskTools
+import de.homevoice.assistant.tasks.TaskRunner
+import de.homevoice.assistant.tasks.TaskStore
+import de.homevoice.assistant.gemini.GeminiTextClient
 import de.homevoice.assistant.memory.MemoryStore
 import de.homevoice.assistant.radio.RadioBrowser
 import de.homevoice.assistant.radio.RadioPlayer
@@ -44,6 +48,7 @@ class App : Application() {
         container.timerManager.restore()
         container.webServer.start()
         container.scope.launch { container.photos.optimizeUploads() }
+        container.taskRunner.start()
     }
 }
 
@@ -108,6 +113,8 @@ class AppContainer(app: Application) {
 
     val memory = MemoryStore(java.io.File(app.filesDir, "memories.json"))
 
+    val tasks = TaskStore(java.io.File(app.filesDir, "tasks.json"))
+
     val speakerRecognizer = SpeakerRecognizer(app, speakerProfiles)
 
     val controller = ConversationController(
@@ -126,7 +133,23 @@ class AppContainer(app: Application) {
 
     val photos = PhotoRepository(app)
 
-    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens, radio, radioBrowser, speakerProfiles, memory)
+    /** Background jobs may think for a while: longer timeouts than for Home Assistant calls. */
+    private val jobHttp: OkHttpClient = baseHttp.newBuilder()
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
+        .build()
+
+    val taskRunner = TaskRunner(
+        context = app,
+        store = tasks,
+        tools = tools,
+        gemini = GeminiTextClient(jobHttp, { settings.current.geminiApiKey }, { settings.current.taskModel }, { settings.current.googleSearch }),
+        scope = scope,
+        baseInstruction = { controller.backgroundInstruction() },
+        evaluate = { template -> controller.evaluateTemplate(template) },
+    )
+
+    val webServer = SettingsWebServer(app, settings, photos, controller, music, mediaSessions, spotifyTokens, radio, radioBrowser, speakerProfiles, memory, tasks)
 
     init {
         tools.setGroup("conversation", conversationTools { controller.requestEnd() })
@@ -135,5 +158,8 @@ class AppContainer(app: Application) {
         tools.setGroup("radio", radioTools(radio, radioBrowser, settings))
         tools.setGroup("speaker", speakerTools(controller))
         tools.setGroup("memory", memoryTools(memory) { controller.currentSpeakerName() })
+        tools.setGroup("tasks", taskTools(tasks, { controller.currentSpeakerName() }) { text ->
+            kotlinx.coroutines.withContext(Dispatchers.Main) { controller.announce(text) }
+        })
     }
 }

@@ -87,6 +87,11 @@ class GeminiLiveSession(
         if (isOpen) socket?.send(LiveProtocol.contextMessage(text))
     }
 
+    /** A text turn the model answers right away (used for announcements). */
+    fun sendTurn(text: String) {
+        if (isOpen) socket?.send(LiveProtocol.contextMessage(text, turnComplete = true))
+    }
+
     fun close() {
         val s = socket ?: return
         if (isOpen) s.send(LiveProtocol.audioStreamEndMessage())

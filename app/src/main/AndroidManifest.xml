@@ -67,6 +67,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".tasks.TaskAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".timer.BootReceiver"
             android:exported="true">
             <intent-filter>

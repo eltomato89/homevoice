@@ -23,6 +23,8 @@ data class SessionConfig(
     /** Gemini FunctionDeclaration objects (name, description, parameters). */
     val functionDeclarations: List<JsonObject>,
     val transcribe: Boolean = true,
+    /** Gemini's built-in Google Search tool. */
+    val googleSearch: Boolean = false,
 )
 
 data class FunctionCall(val id: String, val name: String, val args: JsonObject)
@@ -65,11 +67,12 @@ object LiveProtocol {
             putJsonObject("systemInstruction") {
                 putJsonArray("parts") { add(buildJsonObject { put("text", config.systemInstruction) }) }
             }
-            if (config.functionDeclarations.isNotEmpty()) {
+            if (config.functionDeclarations.isNotEmpty() || config.googleSearch) {
                 putJsonArray("tools") {
-                    add(buildJsonObject {
-                        put("functionDeclarations", JsonArray(config.functionDeclarations))
-                    })
+                    if (config.googleSearch) add(buildJsonObject { putJsonObject("googleSearch") {} })
+                    if (config.functionDeclarations.isNotEmpty()) {
+                        add(buildJsonObject { put("functionDeclarations", JsonArray(config.functionDeclarations)) })
+                    }
                 }
             }
             putJsonObject("contextWindowCompression") { putJsonObject("slidingWindow") {} }
@@ -89,8 +92,8 @@ object LiveProtocol {
         }
     }.toString()
 
-    /** Adds text to the conversation without asking for an answer (turnComplete = false). */
-    fun contextMessage(text: String): String = buildJsonObject {
+    /** Adds text to the conversation; with [turnComplete] = false the model does not answer yet. */
+    fun contextMessage(text: String, turnComplete: Boolean = false): String = buildJsonObject {
         putJsonObject("clientContent") {
             put("turns", buildJsonArray {
                 add(buildJsonObject {
@@ -98,7 +101,7 @@ object LiveProtocol {
                     putJsonArray("parts") { add(buildJsonObject { put("text", text) }) }
                 })
             })
-            put("turnComplete", false)
+            put("turnComplete", turnComplete)
         }
     }.toString()
 

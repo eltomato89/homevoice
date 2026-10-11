@@ -356,6 +356,34 @@ class ConversationController(
     /** Speech of the previous utterance, for the who_is_speaking tool. */
     private var lastUtterance: List<ShortArray> = emptyList()
 
+    /** Announcement to speak as soon as the next session is ready. */
+    @Volatile private var pendingAnnouncement: String? = null
+
+    /**
+     * Speaks [text] on the device (for scheduled jobs): opens a short session in which the model says
+     * it; whoever is in the kitchen can answer. During a conversation it is said right away.
+     */
+    fun announce(text: String) {
+        val live = session
+        if (live != null) {
+            live.sendTurn("[Geplanter Job] Sag jetzt kurz diese Durchsage: \"$text\"")
+            return
+        }
+        pendingAnnouncement = text
+        Log.i(TAG, "Announcement: $text")
+        startSession()
+        if (session == null) pendingAnnouncement = null // e.g. no API key
+    }
+
+    /** Renders a Jinja template in Home Assistant; null when Home Assistant is not connected. */
+    suspend fun evaluateTemplate(template: String): String? {
+        val client = haClient ?: return null
+        return renderHomeAssistantTemplate(client, template)
+    }
+
+    /** Context for background jobs: date, household, home status, memory. */
+    fun backgroundInstruction(): String = systemInstruction(settings)
+
     /** Name of the speaker the model was last told about in this session, if any. */
     fun currentSpeakerName(): String? = currentSpeakerId?.let { profiles.get(it)?.name }
 
@@ -529,7 +557,9 @@ class ConversationController(
             model = s.model.trim(),
             voice = s.voice.trim(),
             systemInstruction = systemInstruction(s),
-            functionDeclarations = tools.declarations(),
+            // Job-only tools (announcements) would only confuse the conversation model.
+            functionDeclarations = tools.declarations(excluding = JOB_ONLY_TOOLS),
+            googleSearch = s.googleSearch,
         )
         val pendingSpeaker = wakeIdentification
         wakeIdentification = null
@@ -596,6 +626,14 @@ class ConversationController(
                 touch()
                 setState(AssistantState.LISTENING)
                 Log.i(TAG, "Session ready")
+                pendingAnnouncement?.let { text ->
+                    pendingAnnouncement = null
+                    awaitingResponseSince = System.currentTimeMillis()
+                    live.sendTurn(
+                        "[Geplanter Job, nicht als Nutzer-Frage verstehen] Sag jetzt diese Durchsage natürlich und " +
+                            "ohne Einleitung: \"$text\". Danach warte, ob jemand antwortet."
+                    )
+                }
             }
             is ServerEvent.Audio -> {
                 if (muteModelAudio) return null
@@ -618,7 +656,7 @@ class ConversationController(
                 newUserTurn = false
             }
             is ServerEvent.OutputTranscript ->
-                if (!muteModelAudio) _status.update { it.copy(modelText = it.modelText + event.text) }
+                if (!muteModelAudio) _status.update { it.copy(modelText = stripToolSyntax(it.modelText + event.text)) }
             ServerEvent.Interrupted -> {
                 if (endRequestedAt == 0L) muteModelAudio = false
                 output.flush()
@@ -773,6 +811,14 @@ class ConversationController(
         append("oder Fakten über den Haushalt (kurz bestätigen). Mit forget löschen, wenn etwas nicht mehr stimmt. ")
         append("Einträge mit Namen in Klammern gelten nur für diese Person.\n")
         append(memory.promptSection() ?: "(noch nichts gemerkt)")
+        if (s.googleSearch) {
+            append("\n\nFür aktuelle oder dir unbekannte Informationen (Nachrichten, Sportergebnisse, Öffnungszeiten, Preise, ")
+            append("Veranstaltungen, Fakten nach deinem Wissensstand) nutze die Google-Suche, statt zu raten. ")
+            append("Fasse Suchergebnisse kurz und gesprochen zusammen, ohne Links oder Quellenangaben vorzulesen.")
+        }
+        append("\n\nFür Erinnerungen und Aktionen zu einer späteren Zeit oder bei einem Ereignis nutze schedule_task ")
+        append("(\"erinnere mich morgen um 10 …\", \"schick mir jeden Werktag um 7 …\", \"sag Bescheid, wenn die Spülmaschine fertig ist\"). ")
+        append("Kurze Countdowns bleiben Timer. Bestätige Zeitpunkt und Art (Durchsage oder Handy-Nachricht) kurz.")
         if (s.radioStations.isNotEmpty()) {
             append("\nGespeicherte Radiosender (für play_radio genau diesen Namen verwenden): ")
             append(s.radioStations.joinToString { it.name })
@@ -853,8 +899,14 @@ class ConversationController(
         return message
     }
 
+    /** Removes tool calls the model sometimes writes out as text (e.g. ".speak(text=…)") from the subtitles. */
+    private fun stripToolSyntax(text: String): String =
+        text.replace(TOOL_SYNTAX, "").replace(Regex("\\s{2,}"), " ")
+
     private companion object {
         const val TAG = "VoiceAssistant"
+        val JOB_ONLY_TOOLS = setOf("speak")
+        val TOOL_SYNTAX = Regex("""\.?\b[a-z_]{3,}\(\s*[a-z_]+\s*=[^)]*\)?""")
         const val SEND_CHUNK_BYTES = 3 * WakeWordDetector.FRAME_LENGTH * 2 // ~96 ms
         const val MAX_PREBUFFER_BYTES = AudioInput.SAMPLE_RATE * 2 * 8 // 8 s
         const val CONNECT_TIMEOUT_MS = 10_000L

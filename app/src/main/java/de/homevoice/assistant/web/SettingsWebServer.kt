@@ -13,6 +13,9 @@ import de.homevoice.assistant.service.ConversationController
 import de.homevoice.assistant.settings.RadioStation
 import de.homevoice.assistant.speaker.SpeakerProfiles
 import de.homevoice.assistant.memory.MemoryStore
+import de.homevoice.assistant.tasks.ScheduledTask
+import de.homevoice.assistant.tasks.TaskStore
+import de.homevoice.assistant.tools.describe
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.settings.SettingsRepository
 import de.homevoice.assistant.slideshow.PhotoRepository
@@ -58,6 +61,7 @@ class SettingsWebServer(
     private val radioBrowser: RadioBrowser,
     private val speakers: SpeakerProfiles,
     private val memory: MemoryStore,
+    private val tasks: TaskStore,
     val port: Int = 8080,
 ) {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
@@ -243,6 +247,30 @@ class SettingsWebServer(
                 val text = runBlocking { withContext(Dispatchers.Main) { controller.previewHomeContext(template) } }
                 Response.json(buildJsonObject { put("text", text) })
             }
+            "GET /api/tasks" -> Response.json(taskList())
+            "POST /api/tasks" -> {
+                val body = json.parseToJsonElement(r.readBody()).jsonObject
+                val prompt = (body["prompt"] as? JsonPrimitive)?.content?.trim().orEmpty()
+                require(prompt.isNotEmpty()) { "Anweisung fehlt" }
+                val at = (body["at"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalArgumentException("Zeitpunkt fehlt")
+                val runAt = java.time.LocalDateTime.parse(if (at.length == 16) "$at:00" else at)
+                    .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val repeat = (body["repeat"] as? JsonPrimitive)?.content?.takeIf { it in setOf("daily", "weekdays", "weekly") } ?: "none"
+                tasks.add { id, c -> ScheduledTask(id, prompt, runAt = runAt, repeat = repeat, createdAt = c, createdBy = "Weboberfläche") }
+                Response.json(taskList())
+            }
+            "POST /api/tasks/run" -> {
+                val task = tasks.get(r.query["id"]?.toIntOrNull() ?: throw IllegalArgumentException("id fehlt"))
+                    ?: return Response.error(404, "Job nicht gefunden")
+                val runner = (context.applicationContext as de.homevoice.assistant.App).container.taskRunner
+                val result = runBlocking { runner.execute(task) }
+                Response.json(buildJsonObject { put("result", result); put("tasks", taskList()["tasks"]!!) })
+            }
+            "POST /api/tasks/delete" -> {
+                tasks.remove(r.query["id"]?.toIntOrNull() ?: throw IllegalArgumentException("id fehlt"))
+                Response.json(taskList())
+            }
             "GET /api/memories" -> Response.json(memoryList())
             "POST /api/memories" -> {
                 val body = json.parseToJsonElement(r.readBody()).jsonObject
@@ -363,6 +391,18 @@ class SettingsWebServer(
             }
             else -> Response.error(404, "Unbekannter Endpunkt")
         }
+    }
+
+    private fun taskList() = buildJsonObject {
+        put("tasks", buildJsonArray {
+            tasks.tasks.value.sortedBy { it.runAt ?: Long.MAX_VALUE }.forEach { t ->
+                add(buildJsonObject {
+                    put("id", t.id); put("prompt", t.prompt); put("when", describe(t))
+                    put("by", t.createdBy ?: ""); put("condition", t.condition ?: "")
+                    put("lastResult", t.lastResult ?: ""); t.lastRunAt?.let { put("lastRunAt", it) }
+                })
+            }
+        })
     }
 
     private fun memoryList() = buildJsonObject {

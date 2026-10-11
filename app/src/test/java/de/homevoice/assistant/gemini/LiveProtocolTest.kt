@@ -44,6 +44,16 @@ class LiveProtocolTest {
     }
 
     @Test
+    fun setupAddsGoogleSearchBeforeFunctions() {
+        val tool = buildJsonObject { put("name", "set_timer"); put("description", "x") }
+        val tools = parse(
+            LiveProtocol.setupMessage(SessionConfig("m", "Kore", "", listOf(tool), googleSearch = true))
+        )["setup"]!!.jsonObject["tools"]!!.jsonArray
+        assertTrue("googleSearch" in tools[0].jsonObject)
+        assertEquals("set_timer", tools[1].jsonObject["functionDeclarations"]!!.jsonArray[0].jsonObject["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun setupOmitsToolsWhenEmptyAndKeepsModelsPrefix() {
         val setup = parse(LiveProtocol.setupMessage(SessionConfig("models/x", "Puck", "", emptyList())))["setup"]!!.jsonObject
         assertFalse("tools" in setup)

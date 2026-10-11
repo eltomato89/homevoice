@@ -32,6 +32,10 @@ class ToolRegistry {
 
     fun declarations(): List<JsonObject> = all().map { it.declaration }
 
+    /** Declarations without the given tool names (e.g. job-only tools in a conversation). */
+    fun declarations(excluding: Set<String>): List<JsonObject> =
+        all().filterNot { it.name in excluding }.map { it.declaration }
+
     suspend fun execute(name: String, args: JsonObject, timeoutMs: Long = 20_000): JsonObject {
         val tool = all().firstOrNull { it.name == name }
             ?: return error("Unbekanntes Tool: $name")
