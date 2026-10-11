@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeVoice</title>
+<style>
+  :root {
+    --bg: #0b0f14; --card: #141a21; --line: #26313c; --text: #e6edf3; --muted: #8b98a5;
+    --accent: #4fc3f7; --ok: #66bb6a; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-weight: 300; font-size: 30px; margin: 8px 0 4px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin-bottom: 24px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; color: var(--accent); letter-spacing: .02em; }
+  label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 13px; }
+  .meter { position: relative; height: 10px; background: #0d1217; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .meter div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+  .meter span { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--err); }
+  input[type=text], input[type=password], input[type=number], textarea, select {
+    width: 100%; padding: 10px 12px; background: #0d1217; color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; font: inherit;
+  }
+  textarea { min-height: 150px; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .row > * { flex: 1 1 160px; }
+  .check { display: flex; gap: 10px; align-items: center; margin: 12px 0 0; color: var(--text); font-size: 15px; }
+  .check input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .status { font-size: 13px; padding: 8px 12px; border-radius: 8px; background: #0d1217; border: 1px solid var(--line); margin-top: 8px; word-break: break-word; }
+  .set { color: var(--ok); }
+  button {
+    background: var(--accent); color: #062033; border: 0; border-radius: 999px; padding: 10px 20px;
+    font: 600 14px system-ui, sans-serif; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .bar { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 35%); padding: 24px 0 16px; display: flex; gap: 12px; align-items: center; }
+  #msg { flex: 1; color: var(--muted); }
+  #msg.ok { color: var(--ok); } #msg.err { color: var(--err); }
+  #login { max-width: 360px; margin: 18vh auto; text-align: center; }
+  #login input { text-align: center; font-size: 28px; letter-spacing: .3em; margin: 16px 0; }
+  .hidden { display: none !important; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <div id="login" class="hidden">
+    <h1>Home<span>Voice</span></h1>
+    <p class="sub">PIN eingeben, die auf dem Gerät angezeigt wird.</p>
+    <input id="pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off">
+    <button id="loginBtn">Verbinden</button>
+    <p id="loginMsg" class="hint"></p>
+  </div>
+
+  <div id="app" class="hidden">
+    <h1>Home<span>Voice</span></h1>
+    <div class="sub" id="state"></div>
+
+    <section>
+      <h2>Gemini</h2>
+      <label>API-Key (Google AI Studio) <span id="geminiApiKeySet" class="set"></span></label>
+      <input id="geminiApiKey" type="password" placeholder="leer lassen = unverändert" autocomplete="off">
+      <div class="hint">Key erstellen: <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></div>
+      <div class="row">
+        <div><label>Modell</label><input id="model" type="text"></div>
+        <div><label>Stimme</label><input id="voice" type="text" list="voices"></div>
+      </div>
+      <datalist id="voices"><option>Kore</option><option>Puck</option><option>Charon</option><option>Aoede</option><option>Fenrir</option><option>Leda</option><option>Orus</option><option>Zephyr</option></datalist>
+      <label>System-Prompt</label>
+      <textarea id="systemPrompt"></textarea>
+      <div class="row">
+        <div><label>Nachlaufzeit nach Antwort (Sekunden)</label><input id="followUpSeconds" type="number" min="3" max="60"></div>
+      </div>
+      <label class="check"><input id="halfDuplex" type="checkbox"> Halbduplex – Mikro stumm während Gemini spricht, unterbrechen per Hotword</label>
+      <label class="check"><input id="communicationAudioMode" type="checkbox"> Kommunikations-Audiomodus (für Geräte mit Echo-Unterdrückung)</label>
+    </section>
+
+    <section>
+      <h2>Hotword (openWakeWord, läuft lokal)</h2>
+      <div class="status" id="hotwordStatus"></div>
+      <div class="row">
+        <div><label>Wake Word</label><select id="wakeModel"></select></div>
+        <div><label>Schwelle (0.1 – 0.95, niedriger = empfindlicher)</label><input id="wakeThreshold" type="number" min="0.1" max="0.95" step="0.05"></div>
+      </div>
+      <label>Hotword-Score der letzten Sekunden</label>
+      <div class="meter"><div id="wakeMeter"></div><span id="wakeMark"></span></div>
+      <div class="hint" id="wakePeakText"></div>
+      <label>Eigenes Modell hochladen (.onnx)</label>
+      <input id="wakeUpload" type="file" accept=".onnx">
+      <div class="hint">openWakeWord-Modelle, z.B. aus der <a href="https://github.com/fwartner/home-assistant-wakewords-collection" target="_blank">Home-Assistant-Wakeword-Sammlung</a> oder selbst trainiert mit dem <a href="https://github.com/dscripka/openWakeWord#training-new-models" target="_blank">openWakeWord-Notebook</a>. Vortrainierte Modelle: Lizenz CC BY-NC-SA 4.0 (privat ok).</div>
+    </section>
+
+    <section>
+      <h2>Home Assistant (MCP)</h2>
+      <div class="status" id="haStatus"></div>
+      <label>URL</label>
+      <input id="haUrl" type="text" placeholder="http://homeassistant.local:8123  oder  http://…:8123/api/webhook/mcp_…">
+      <div class="hint">Basis-URL → eingebauter MCP-Server (Token nötig). Vollständige Webhook-URL (z.B. HA-MCP) → ohne Token.</div>
+      <label>Access Token (optional) <span id="haTokenSet" class="set"></span></label>
+      <input id="haToken" type="password" placeholder="leer lassen = unverändert" autocomplete="off">
+      <div class="row" style="margin-top:12px">
+        <div style="flex:0 0 auto"><button class="secondary" id="testHa">Speichern &amp; testen</button></div>
+        <div style="flex:0 0 auto"><button class="secondary" id="clearHa">Token löschen</button></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Diashow &amp; Anzeige</h2>
+      <div class="status" id="photoStatus"></div>
+      <label>Fotos hochladen</label>
+      <input id="photos" type="file" accept="image/*" multiple>
+      <div class="row" style="margin-top:12px">
+        <div style="flex:0 0 auto"><button class="secondary" id="deletePhotos">Hochgeladene Fotos löschen</button></div>
+      </div>
+      <div class="row">
+        <div><label>Bildwechsel (Sekunden)</label><input id="slideIntervalSeconds" type="number" min="5" max="3600"></div>
+      </div>
+      <label class="check"><input id="showSeconds" type="checkbox"> Sekunden anzeigen</label>
+      <label class="check"><input id="nightModeEnabled" type="checkbox"> Nachtmodus (nur gedimmte Uhr)</label>
+      <div class="row">
+        <div><label>Nachtmodus ab (Stunde)</label><input id="nightStartHour" type="number" min="0" max="23"></div>
+        <div><label>Nachtmodus bis (Stunde)</label><input id="nightEndHour" type="number" min="0" max="23"></div>
+      </div>
+    </section>
+
+    <div class="bar">
+      <span id="msg"></span>
+      <button id="save">Speichern</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const TEXT = ['model', 'voice', 'systemPrompt', 'haUrl', 'wakeModel'];
+const NUMBER_INT = ['followUpSeconds', 'slideIntervalSeconds', 'nightStartHour', 'nightEndHour'];
+const NUMBER_FLOAT = ['wakeThreshold'];
+const BOOL = ['halfDuplex', 'communicationAudioMode', 'showSeconds', 'nightModeEnabled'];
+const SECRETS = ['geminiApiKey', 'haToken'];
+let pin = '';
+try { pin = localStorage.getItem('pin') || ''; } catch (e) {}
+
+function msg(text, cls = '') { const m = $('msg'); m.textContent = text; m.className = cls; }
+
+async function api(method, path, body, raw) {
+  const res = await fetch(path, {
+    method,
+    headers: Object.assign({ 'X-Pin': pin }, raw ? { 'Content-Type': 'application/octet-stream' } : body ? { 'Content-Type': 'application/json' } : {}),
+    body: raw ? body : body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { showLogin('PIN falsch'); throw new Error('PIN falsch'); }
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+// fields = false only refreshes the status lines, so unsaved edits are kept.
+function render(data, fields = true) {
+  const s = data.settings;
+  const sel = $('wakeModel');
+  const options = data.wakeModels.map(m => m.id + '=' + m.name).join('|');
+  if (sel.dataset.options !== options) {
+    sel.innerHTML = data.wakeModels.map(m => '<option value="' + m.id + '">' + m.name + '</option>').join('');
+    sel.dataset.options = options;
+    sel.value = s.wakeModel;
+  }
+  if (fields) {
+    TEXT.concat(NUMBER_INT, NUMBER_FLOAT).forEach(k => $(k).value = s[k]);
+    BOOL.forEach(k => $(k).checked = s[k]);
+  }
+  SECRETS.forEach(k => { $(k + 'Set').textContent = data.secretsSet[k] ? '✓ gesetzt' : ''; });
+  const st = data.status;
+  $('state').textContent = 'Status: ' + ({IDLE:'bereit', CONNECTING:'verbindet', LISTENING:'hört zu', SPEAKING:'spricht', ERROR:'Fehler'}[st.state] || st.state)
+    + (st.error ? ' – ' + st.error : '');
+  $('hotwordStatus').textContent = st.hotword ? 'Aktiv: „' + st.hotword + '“' : (st.hotwordError || 'inaktiv');
+  $('wakeMeter').style.width = Math.round(Math.min(1, st.wakePeak) * 100) + '%';
+  $('wakeMark').style.left = Math.round(s.wakeThreshold * 100) + '%';
+  $('wakePeakText').textContent = 'Spitze: ' + st.wakePeak.toFixed(2) + ' · Schwelle: ' + s.wakeThreshold.toFixed(2)
+    + ' – Wake Word sagen und beobachten; liegt die Spitze knapp unter der Schwelle, Schwelle senken.';
+  $('haStatus').textContent = st.homeAssistant;
+  $('photoStatus').textContent = st.uploadedPhotos + ' hochgeladene Fotos'
+    + (s.photoTreeUri ? ' · zusätzlich Ordner auf dem Gerät' : '');
+}
+
+function collect() {
+  const out = {};
+  TEXT.forEach(k => out[k] = $(k).value);
+  NUMBER_INT.forEach(k => out[k] = parseInt($(k).value, 10));
+  NUMBER_FLOAT.forEach(k => out[k] = parseFloat($(k).value));
+  BOOL.forEach(k => out[k] = $(k).checked);
+  SECRETS.forEach(k => { if ($(k).value.trim()) out[k] = $(k).value.trim(); });
+  return out;
+}
+
+async function save() {
+  const data = await api('POST', '/api/settings', collect());
+  SECRETS.forEach(k => $(k).value = '');
+  render(data);
+  return data;
+}
+
+async function run(button, fn) {
+  button.disabled = true;
+  try { await fn(); } catch (e) { msg(e.message, 'err'); } finally { button.disabled = false; }
+}
+
+async function upload(path, file) {
+  return api('POST', path + '?name=' + encodeURIComponent(file.name), file, true);
+}
+
+function showLogin(text) {
+  $('app').classList.add('hidden'); $('login').classList.remove('hidden');
+  $('loginMsg').textContent = text || ''; $('pin').focus();
+}
+
+async function load() {
+  try {
+    render(await api('GET', '/api/settings'));
+    $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  } catch (e) { if (!$('app').classList.contains('hidden')) msg(e.message, 'err'); }
+}
+
+$('loginBtn').onclick = () => {
+  pin = $('pin').value.trim();
+  try { localStorage.setItem('pin', pin); } catch (e) {}
+  load();
+};
+$('pin').onkeydown = e => { if (e.key === 'Enter') $('loginBtn').click(); };
+$('save').onclick = () => run($('save'), async () => { await save(); msg('Gespeichert ✓', 'ok'); });
+$('testHa').onclick = () => run($('testHa'), async () => {
+  await save(); msg('Teste Home Assistant…');
+  const r = await api('POST', '/api/test-ha');
+  $('haStatus').textContent = r.result;
+  msg(r.result.startsWith('Fehler') ? r.result : 'Home Assistant verbunden ✓', r.result.startsWith('Fehler') ? 'err' : 'ok');
+});
+$('clearHa').onclick = () => run($('clearHa'), async () => { render(await api('POST', '/api/settings', { haToken: null })); msg('Token gelöscht', 'ok'); });
+$('wakeUpload').onchange = e => run($('wakeUpload'), async () => {
+  render(await api('POST', '/api/wakeword?name=' + encodeURIComponent(e.target.files[0].name), e.target.files[0], true), false);
+  $('wakeModel').value = 'custom';
+  e.target.value = '';
+  msg('Modell hochgeladen und aktiviert ✓', 'ok');
+});
+$('photos').onchange = e => run($('photos'), async () => {
+  const files = Array.from(e.target.files);
+  for (let i = 0; i < files.length; i++) {
+    msg('Lade Foto ' + (i + 1) + ' von ' + files.length + '…');
+    render(await upload('/api/photos', files[i]), false);
+  }
+  e.target.value = '';
+  msg(files.length + ' Fotos hochgeladen ✓', 'ok');
+});
+$('deletePhotos').onclick = () => run($('deletePhotos'), async () => { render(await api('POST', '/api/photos/delete'), false); msg('Fotos gelöscht', 'ok'); });
+
+if (pin) load(); else showLogin();
+setInterval(() => { if (!$('app').classList.contains('hidden')) api('GET', '/api/settings').then(d => render(d, false)).catch(() => {}); }, 1000);
+</script>
+</body>
+</html>
