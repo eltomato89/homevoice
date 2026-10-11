@@ -77,6 +77,7 @@ import de.homevoice.assistant.service.AssistantState
 import de.homevoice.assistant.service.AssistantStatus
 import de.homevoice.assistant.settings.Settings
 import de.homevoice.assistant.slideshow.Photo
+import de.homevoice.assistant.text.GermanNumbers
 import de.homevoice.assistant.timer.TimerEntry
 import de.homevoice.assistant.ui.theme.Palette
 import de.homevoice.vision.Shot
@@ -402,7 +403,7 @@ private fun Transcript(status: AssistantStatus, modifier: Modifier) {
         ) {
             if (status.userText.isNotBlank()) {
                 Text(
-                    status.userText.trim().takeLast(200),
+                    GermanNumbers.normalize(status.userText.trim()).takeLast(200),
                     color = Color.White.copy(alpha = 0.65f),
                     fontSize = 22.ssp,
                     textAlign = TextAlign.Center,
@@ -410,7 +411,7 @@ private fun Transcript(status: AssistantStatus, modifier: Modifier) {
             }
             if (status.modelText.isNotBlank()) {
                 Text(
-                    status.modelText.trim().takeLast(400),
+                    GermanNumbers.normalize(status.modelText.trim()).takeLast(400),
                     color = Color.White,
                     fontSize = 30.ssp,
                     textAlign = TextAlign.Center,
