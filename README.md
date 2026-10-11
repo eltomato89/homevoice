@@ -1,93 +1,152 @@
 # HomeVoice
 
-Smart-Display-Sprachassistent für ein Android-Tablet (getestet als Ziel: LineageOS 18.1 / Android 11).
+Sprachassistent und Smart Display für Android-Geräte mit LineageOS – entwickelt und getestet auf einem
+**Echo Show 5 (2. Gen.) mit LineageOS 18.1 / Android 11** (MT8163, 1 GB RAM, 960×480).
 
 - **Gemini Live API** mit nativem Audio-Modell: Sprache geht direkt rein und kommt direkt raus (kein STT/TTS)
-- **Lokales Hotword** mit [openWakeWord](https://github.com/dscripka/openWakeWord) (ONNX Runtime, kein Account) – solange niemand das Hotword sagt, besteht keine Verbindung zu Gemini
-- **Tools**: Timer (stellen, abbrechen, auflisten, Alarm stoppen), **Home Assistant über MCP** und **Musik** (Spotify, YouTube Music, Lautstärke)
-- **Launcher-UI**: Foto-Diashow aus einem lokalen Ordner, große Uhr, Timer-Anzeige, Statusleiste, Nachtmodus
+- **Lokales Hotword** ([openWakeWord](https://github.com/dscripka/openWakeWord)) – bis zum Hotword besteht keine Verbindung zu Gemini
+- **Smart Home** über Home Assistant (MCP), mit aktuellem Hausstatus im Prompt
+- **Musik & Radio**: Spotify, YouTube Music, Internetradio, Now-Playing-Widget
+- **Stimmerkennung** auf dem Gerät: Gemini weiß, wer spricht („meine Termine“)
+- **Gedächtnis**, **geplante Jobs** (Erinnerungen, Push-Nachrichten, Ereignisse) und **Google-Suche**
+- **Launcher-Oberfläche**: Fotodiashow mit gesichtsbasierter Kamerafahrt, große Uhr, Timer, Mikrofon-Taste
+- **Einrichtung im Browser**, nicht am Gerät (es steht offen herum)
 
 ## Was du brauchst
 
-| Was | Woher |
+| Was | Woher / Hinweis |
 |---|---|
-| Gemini API-Key | <https://aistudio.google.com/apikey> – ein Gemini-Abo (AI Pro/Ultra) enthält **keinen** API-Zugang; Free Tier mit Limits oder Pay-as-you-go |
-| Hotword | Nichts – eingebaut sind „Alexa“ (Standard), „Hey Jarvis“, „Hey Mycroft“, „Hey Rhasspy“. Eigene openWakeWord-Modelle (`.onnx`) können hochgeladen werden, z.B. aus der [Home-Assistant-Wakeword-Sammlung](https://github.com/fwartner/home-assistant-wakewords-collection) oder selbst trainiert. Die vortrainierten Modelle stehen unter CC BY-NC-SA 4.0 (privat ok). |
-| Home Assistant (optional) | **Variante A – HA-MCP:** die Webhook-URL der Integration (`http://<ha>:8123/api/webhook/mcp_…`) eintragen, kein Token nötig. **Variante B – eingebauter MCP-Server:** Integration „Model Context Protocol Server“ hinzufügen, Basis-URL (`http://<ha>:8123`) plus Long-Lived Access Token eintragen. |
+| Gemini API-Key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Ein Gemini-Abo (AI Pro/Ultra) enthält **keinen** API-Zugang. Ohne Abrechnung läuft vieles im Freikontingent; die **Google-Suche** braucht eine aktivierte Abrechnung (5.000 Suchen/Monat frei, dann 14 $/1.000) – dann sind auch Gespräche kostenpflichtig. |
+| Hotword | Nichts: eingebaut sind „Alexa“ (Standard), „Hey Jarvis“, „Hey Mycroft“, „Hey Rhasspy“. Eigene openWakeWord-Modelle (`.onnx`) lassen sich hochladen, z.B. aus der [Home-Assistant-Wakeword-Sammlung](https://github.com/fwartner/home-assistant-wakewords-collection). |
+| Home Assistant (optional) | **HA-MCP**: Webhook-URL (`http://<ha>:8123/api/webhook/mcp_…`), kein Token. Oder **eingebauter MCP-Server**: Basis-URL plus Long-Lived Access Token. Hausstatus und Ereignis-Jobs brauchen HA-MCP (`ha_eval_template`). |
+| Spotify (optional) | **Premium** und eine eigene App im [Spotify-Dashboard](https://developer.spotify.com/dashboard) (seit Feb. 2026 nur mit Premium). Die Spotify-App muss auf dem Gerät installiert sein. |
+| YouTube Music (optional) | App auf dem Gerät, **Premium** für Wiedergabe im Hintergrund. |
 
 ## Bauen & installieren
 
-Voraussetzungen: JDK 17+ und Android SDK (Platform 35). `local.properties` enthält `sdk.dir`.
+Voraussetzungen: JDK 17+ und Android SDK (Platform 35); `local.properties` enthält `sdk.dir`.
 
 ```bash
 ./gradlew assembleDebug test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Rechte für Mediensteuerung und "zurück zur Uhr" nach dem Öffnen von Musik-Apps:
+adb shell cmd notification allow_listener de.homevoice.assistant/de.homevoice.assistant.media.MediaListenerService
+adb shell appops set de.homevoice.assistant SYSTEM_ALERT_WINDOW allow
 ```
 
-Danach auf dem Tablet:
-1. App starten und Mikrofon erlauben
-2. Home-Taste drücken → **HomeVoice** als Standard-Launcher wählen („Immer“)
-3. **Einstellungen am Computer:** Das Gerät zeigt oben links `Einrichtung im Browser: http://<IP>:8080 · PIN ……`. Diese Adresse im Browser öffnen und die PIN eingeben. Dort lassen sich alle Einstellungen bearbeiten, Hotword-Dateien und Fotos hochladen und Home Assistant testen. Der Hinweis verschwindet, sobald ein Gemini-Key gesetzt ist; Adresse und PIN stehen dann weiterhin oben in den Einstellungen auf dem Gerät.
-4. Alternativ auf dem Gerät: **lange auf den Bildschirm tippen** → Einstellungen: Gemini-Key, Wake Word wählen oder `.onnx` importieren, Home Assistant URL (+ ggf. Token) („Speichern & Verbindung testen“), Fotoordner wählen → **Speichern**
+Danach auf dem Gerät:
+1. App starten, Mikrofon erlauben, Home-Taste → **HomeVoice** als Standard-Launcher („Immer“).
+2. Das Display zeigt `Einrichtung im Browser: http://<IP>:8080 · PIN ……` (später: **lange tippen** zeigt Adresse und PIN erneut).
+3. Adresse am Computer öffnen, PIN eingeben, Gemini-Key eintragen – fertig. Alles Weitere ebenfalls dort.
 
-Fotos z.B. per Syncthing oder USB in einen Ordner auf dem Tablet legen. Unterordner werden mit eingelesen, die Liste wird stündlich neu eingelesen.
-
-## Musik
-
-- **Spotify** (Premium nötig): Auf [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) eine App anlegen, Redirect URI `http://127.0.0.1:8080/spotify/callback` eintragen und die Client-ID in der Weboberfläche unter „Musik“ einfügen. „Mit Spotify verbinden“ → anmelden → die Seite danach lädt nicht (gewollt) → komplette Adresse aus der Adresszeile in die Weboberfläche kopieren. Gespielt wird über die Spotify-App auf dem Gerät (Spotify Connect); ist sie nicht aktiv, wird sie kurz geöffnet.
-- **YouTube Music** (Premium für Hintergrundwiedergabe): Die App sucht über die Such-Schnittstelle von music.youtube.com (inoffiziell, ohne Schlüssel) und öffnet das Ergebnis direkt in der YouTube-Music-App. Lieblingssongs = Playlist „Mag ich“.
-- Sprachbefehle z.B.: „Spiel Musik von Queen“, „Spiel meine Playlist Sommer“, „Spiel Bohemian Rhapsody auf YouTube Music“, „Lauter“, „Lautstärke 5“, „Lautstärke 30 Prozent“, „Stopp die Musik“, „Nächstes Lied“.
-- Läuft Musik, zeigt der Startbildschirm ein Widget mit Cover, Zurück, Play/Pause und Weiter. Beim Hotword wird die Musik leiser gestellt.
-- Benötigte Rechte (einmalig, z.B. per adb):
-  ```bash
-  adb shell cmd notification allow_listener de.homevoice.assistant/de.homevoice.assistant.media.MediaListenerService
-  adb shell appops set de.homevoice.assistant SYSTEM_ALERT_WINDOW allow
-  ```
+Auf dem Gerät selbst gibt es bewusst **keine Einstellungen**.
 
 ## Bedienung
 
-- **Hotword** → kurzer Ton → sprechen. Gemini antwortet per Sprache. Du kannst Gemini jederzeit unterbrechen.
-- Nach der Antwort bleibt die Session einige Sekunden offen für Rückfragen (Einstellung „Nachlaufzeit“), danach Abschlusston. Gemini kann das Gespräch auch selbst beenden („Danke, das war's“).
-- **Tippen** auf den Bildschirm: Gespräch starten (ohne Hotword) / laufendes Gespräch beenden / klingelnden Timer stoppen
-- **Hotword während ein Timer klingelt** stoppt den Alarm
-- **Lange tippen**: Einstellungen. Unter „System“ kommst du zu den Android-Einstellungen und zur Launcher-Auswahl.
+- **Hotword** → Ton → sprechen. Gemini antwortet per Sprache und lässt sich unterbrechen (bei Halbduplex per Hotword).
+- Die Sitzung bleibt offen, solange jemand spricht (lokale Spracherkennung mit [Silero VAD](https://github.com/snakers4/silero-vad)), und endet **5 Sekunden** nach dem letzten Wort oder wenn Gemini sich verabschiedet („Danke, tschüss“). Geräusche halten sie nicht offen.
+- **Tippen**: Gespräch starten/beenden, klingelnden Timer stoppen.
+- **Mikrofon-Taste** oben rechts: Aufnahme komplett aus (rot, roter Balken unten); übersteht Neustarts.
+- **Lange tippen**: Adresse und PIN der Weboberfläche.
+- Statusleiste unten: weiß = verbindet, blau = hört zu, violett = spricht, rot = Fehler.
+- Untertitel zeigen Zahlen, Daten und Uhrzeiten als Ziffern („am 24. Oktober um 10:30 Uhr“).
 
-Statusleiste unten: weiß = verbindet, blau = hört zu, violett = spricht, rot = Fehler.
+## Funktionen
 
-## Audio-Tipps
+### Smart Home (Home Assistant)
+- Gemini bekommt nur **sichere HA-MCP-Tools** (Zustände, Schalten, Verlauf, Kalender, To-dos, Dienste auflisten). Admin-Tools (Neustart, Löschen, HACS, Backups …) nur per ausdrücklicher Freigabe.
+- **Hausstatus**: ein Jinja-Template (in der Weboberfläche bearbeitbar, mit Vorschau), das Home Assistant jede Minute rendert. Das Ergebnis – z.B. Lichter je Raum, Energie/PV, Auto, Wetter, Kalender – steht im System-Prompt; Gemini antwortet so ohne Abfrage und kennt die Entitäts-IDs zum Schalten. Die minütliche Abfrage geht nur an Home Assistant, nicht an Gemini.
 
-- **Echo-Unterdrückung** (Standard an): nutzt den Kommunikations-Audiomodus von Android, damit die Echo-Unterdrückung (AEC) des Geräts greift und du Gemini ins Wort fallen kannst.
-- Wenn Gemini sich selbst hört und unterbricht: **Halbduplex** einschalten. Dann ist das Mikrofon stumm, solange Gemini spricht (Unterbrechen geht dann nicht mehr).
-- Hotword reagiert zu oft oder zu selten → **Schwelle** anpassen. Die Weboberfläche zeigt live den Hotword-Score; Wake Word sagen und die Schwelle knapp unter die erreichte Spitze legen.
-- Rechenlast: Ist es im Raum ruhig, überspringt der Detektor das teure Embedding-Modell (adaptive Stille-Schwelle). Auf dem Echo Show 5 (MT8163, 32 Bit) liegt die Last im Leerlauf bei etwa 20 % eines Kerns statt über 80 %.
+### Musik & Radio
+- **Spotify**: OAuth in der Weboberfläche (PKCE, Redirect `http://127.0.0.1:8080/spotify/callback` – die Seite lädt danach nicht, Adresse zurückkopieren). Suche über die Web API (Künstler, Titel, Alben, eigene Playlists, Lieblingssongs), Wiedergabe auf der Spotify-App des Geräts.
+- **YouTube Music**: Suche über die (inoffizielle) Such-Schnittstelle von music.youtube.com, Wiedergabe per Deep Link in der App.
+- **Radio** ohne zusätzliche App (Media3/ExoPlayer, MP3/AAC/HLS, Titelanzeige aus dem Stream). Eigene Senderliste in der Weboberfläche; unbekannte Sender sucht HomeVoice im Verzeichnis [radio-browser.info](https://www.radio-browser.info) und speichert sie.
+- Lautstärke in Prozent, 1–10 oder „lauter/leiser“; Pause, Weiter, „Was läuft gerade?“.
+- **Now-Playing-Widget** mit Cover und Tasten; beim Hotword wird Musik leiser gestellt.
+
+### Stimmerkennung
+- Pro Person 3–5 Sätze am Gerät einlernen (Weboberfläche → „Personen“); gespeichert wird nur ein Stimmabdruck ([CAM++ / 3D-Speaker](https://github.com/modelscope/3D-Speaker)), alles auf dem Gerät.
+- Erkennung schon am Hotword (vorläufig im System-Prompt), danach je Äußerung; Tool `who_is_speaking` für „Wer bin ich?“.
+- Jede Person kann einen **persönlichen Kalender** bekommen: „Was steht **für mich** an?“ fragt diesen, „Was steht heute an?“ alle Kalender.
+- Unsichere Fälle (ähnliche Stimmen) werden als „unbekannt“ gemeldet statt geraten. Kein Sicherheitsmerkmal.
+
+### Gedächtnis
+- „Merk dir …“ / „Vergiss …“; Einträge pro Person oder für den Haushalt. Alles Gemerkte steht im System-Prompt (neueste zuerst, ältere per Suche). Bearbeiten in der Weboberfläche.
+
+### Geplante Jobs
+- „Erinnere mich morgen um 10 …“, „Schick mir werktags um 7 das Wetter aufs iPhone“, „Sag Bescheid, wenn die Spülmaschine fertig ist“.
+- Ein Job ist ein Prompt plus Auslöser (Uhrzeit einmalig/täglich/werktags/wöchentlich oder Ereignis als Jinja-Bedingung, minütlich lokal geprüft). Ausgeführt von HomeVoice mit Gemini Flash und allen Werkzeugen – Durchsage am Gerät oder Push-Nachricht über einen HA-`notify`-Dienst. Home Assistant liefert nur Werte, die Jobs verwaltet HomeVoice.
+
+### Google-Suche
+- Eingebautes *Grounding with Google Search* im Gespräch und in Jobs (Google sucht serverseitig). Abschaltbar.
+
+### Diashow
+- Fotos über die Weboberfläche hochladen (auch HEIC); sie werden auf max. 2560 px verkleinert.
+- **Gesichtserkennung beim Upload** auf dem Gerät ([UltraFace](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB)): Die Ken-Burns-Fahrt hält alle bzw. die größten Gesichter im Bild, statt minutenlang Füße zu zeigen.
+- Galerie mit Vorschaubildern und Einzel-Löschen. Nachtmodus (gedimmte Uhr).
+
+### Timer
+- Stellen, abbrechen, auflisten, Alarm stoppen (Tippen oder Hotword); überstehen Neustarts.
+
+## Weboberfläche (Port 8080, PIN-geschützt)
+
+Gemini (Key, Modelle, Stimme, Prompt, Google-Suche, Mikrofon) · Jobs · Gedächtnis · Personen · Radio · Musik/Spotify ·
+Hotword (Modell, Schwelle mit Live-Score) · Home Assistant (URL, Token, Tool-Freigabe, Hausstatus-Template) · Diashow & Anzeige.
+
+## Audio-Hinweise
+
+- Das Echo Show 5 meldet **keine Echo-Unterdrückung (AEC)**. Darum ist dort **Halbduplex** Standard: Während Gemini spricht, ist das Mikrofon für Gemini stumm; unterbrechen geht per Hotword.
+- Hotword-Schwelle in der Weboberfläche einstellen (Live-Score: Wake Word sagen, Schwelle knapp unter die Spitze legen).
+- Im Leerlauf überspringt die Hotword-Erkennung bei Stille das teure Modell; die Diashow zeichnet mit 25 fps. Leerlauflast auf dem MT8163: grob 20–40 % eines Kerns je nach Geräuschkulisse.
+
+## Daten & Datenschutz
+
+| Bleibt auf dem Gerät | Geht an Google (Gemini) |
+|---|---|
+| Hotword- und Spracherkennung, Stimmabdrücke, Gesichtserkennung, Fotos | Das Gespräch (Audio) ab dem Hotword |
+| Gedächtnis, Jobs, Senderliste, Einstellungen, Spotify-Tokens | System-Prompt: Hausstatus, Gedächtnis, Haushalt, Sendernamen |
+| Minütliche Hausstatus-/Ereignis-Abfragen (nur an Home Assistant) | Ausgeführte Jobs (Prompt + Tool-Ergebnisse) |
+
+Keys liegen unverschlüsselt in den privaten App-Daten (für ein privates Gerät vertretbar).
 
 ## Architektur
 
 ```
-MainActivity (Launcher, Compose)          AssistantService (Foreground, Mikrofon)
-        │ StateFlows                                │ start/stop
-        ▼                                           ▼
-ConversationController ── AudioInput (1× AudioRecord 16 kHz) ──┬─> WakeWordDetector (openWakeWord) [IDLE]
-        │                                                      └─> GeminiLiveSession (WebSocket) [aktiv]
-        ├── AudioOutput (AudioTrack 24 kHz, Flush bei Unterbrechung)
-        └── ToolRegistry ── timer/end_conversation (lokal)
-                         └─ ha_* → HomeAssistantMcpClient (Streamable HTTP, JSON-RPC)
+MainActivity (Launcher, Compose)   AssistantService (Foreground)   SettingsWebServer (:8080)
+        │ StateFlows                        │                            │
+        ▼                                   ▼                            ▼
+ConversationController ── AudioInput (16 kHz) ──┬─> WakeWordDetector (openWakeWord)   [Leerlauf]
+   │                                            ├─> SileroVad + SpeakerRecognizer     [Gespräch]
+   │                                            └─> GeminiLiveSession (WebSocket)     [Gespräch]
+   ├── AudioOutput (24 kHz)       ├── MediaSessions / MusicPlayer / RadioPlayer
+   └── ToolRegistry ── Timer, Musik, Radio, Gedächtnis, Jobs, Sprecher
+                    └─ ha_* → HomeAssistantMcpClient (Streamable HTTP)
+TaskRunner ── GeminiTextClient (generateContent + Tool-Schleife) ── Systemwecker / Ereignis-Prüfung
 ```
 
 | Pfad | Inhalt |
 |---|---|
-| `service/ConversationController.kt` | State Machine, Session-Lebenszyklus, Tool-Ausführung |
-| `wakeword/` (Modul) | openWakeWord-Pipeline in reinem Kotlin (Spektrogramm → Embedding → Wake-Word-Modell), mit `say`-basierten Tests auf dem Mac |
-| `gemini/LiveProtocol.kt` | Nachrichtenformat der Live API (Setup, Audio, Tool-Antworten, Parser) |
-| `mcp/HomeAssistantMcpClient.kt` | MCP-Client (Initialisierung, Session-ID, JSON- und SSE-Antworten) |
-| `mcp/SchemaConverter.kt` | JSON Schema → Gemini-Schema (OpenAPI-Teilmenge) |
-| `timer/` | Timer mit AlarmManager, Persistenz, Alarmton |
-| `ui/` | Home-Screen (Diashow, Uhr, Timer, Alarm) und Einstellungen |
+| `service/ConversationController.kt` | Sitzungen, Sitzungsende, Durchsagen, Stimmerkennung, System-Prompt |
+| `gemini/` | Live-Protokoll (WebSocket) und Text-Client für Jobs |
+| `mcp/` | MCP-Client (JSON/SSE, abbrechbar) und JSON-Schema → Gemini-Schema |
+| `media/`, `radio/` | Spotify, YouTube Music, Media-Sessions, Radio-Player und -Verzeichnis |
+| `speaker/`, `memory/`, `tasks/` | Personen/Stimmabdrücke, Gedächtnis, geplante Jobs |
+| `tools/` | Alle Gemini-Werkzeuge |
+| `slideshow/`, `ui/` | Fotos (Verkleinerung, Gesichter), Home-Screen, Widget |
+| `web/`, `assets/web/` | Weboberfläche (Server und Seite) |
+| `wakeword/` (Modul) | Reines Kotlin + ONNX: openWakeWord, Silero VAD, Fbank + Sprecher-Embedding, Gesichtserkennung, Kamerafahrt-Planung |
 
-Logs: `adb logcat -s VoiceAssistant`
+Tests: `./gradlew test` (Unit-Tests; das Modul `wakeword` testet Hotword, VAD und Sprechererkennung mit `say`-Stimmen auf macOS
+und die Gesichtserkennung mit gemeinfreien Wikimedia-Fotos). Logs: `adb logcat -s VoiceAssistant`.
 
 ## Bekannte Grenzen
 
-- API-Keys liegen unverschlüsselt in den privaten App-Einstellungen. Für ein privates Gerät ist das ok.
-- Eine Gemini-Session ist auf 10 Minuten begrenzt.
-- Werkzeuge mit frei formbaren Objekt-Parametern werden Gemini als JSON-Text angeboten (Gemini erlaubt keine Objekte ohne Felder).
+- Die Kamera des Echo Show wird von diesem LineageOS-Build nicht erkannt (kein Kamera-Feature).
+- Gemini-Sitzungen sind auf 10 Minuten begrenzt.
+- YouTube-Music-Suche und Radio-Browser sind inoffizielle bzw. Community-Dienste und können ausfallen.
+- Spotify nur über die Spotify-App (kein offizielles Wiedergabe-SDK ohne App).
+
+## Lizenzen der eingebetteten Modelle
+
+openWakeWord-Modelle: CC BY-NC-SA 4.0 (nicht kommerziell) · Silero VAD: MIT · UltraFace: MIT · 3D-Speaker CAM++: Apache 2.0.
+Vor einer Veröffentlichung die Lizenzen beachten.
