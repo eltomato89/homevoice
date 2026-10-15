@@ -1,152 +1,158 @@
 # HomeVoice
 
-Sprachassistent und Smart Display für Android-Geräte mit LineageOS – entwickelt und getestet auf einem
-**Echo Show 5 (2. Gen.) mit LineageOS 18.1 / Android 11** (MT8163, 1 GB RAM, 960×480).
+*[Deutsche Version](README.de.md)*
 
-- **Gemini Live API** mit nativem Audio-Modell: Sprache geht direkt rein und kommt direkt raus (kein STT/TTS)
-- **Lokales Hotword** ([openWakeWord](https://github.com/dscripka/openWakeWord)) – bis zum Hotword besteht keine Verbindung zu Gemini
-- **Smart Home** über Home Assistant (MCP), mit aktuellem Hausstatus im Prompt
-- **Musik & Radio**: Spotify, YouTube Music, Internetradio, Now-Playing-Widget
-- **Stimmerkennung** auf dem Gerät: Gemini weiß, wer spricht („meine Termine“)
-- **Gedächtnis**, **geplante Jobs** (Erinnerungen, Push-Nachrichten, Ereignisse) und **Google-Suche**
-- **Launcher-Oberfläche**: Fotodiashow mit gesichtsbasierter Kamerafahrt, große Uhr, Timer, Mikrofon-Taste
-- **Einrichtung im Browser**, nicht am Gerät (es steht offen herum)
+Voice assistant and smart display for Android devices running LineageOS – built and tested on an
+**Echo Show 5 (2nd gen) with LineageOS 18.1 / Android 11** (MT8163, 1 GB RAM, 960×480).
 
-## Was du brauchst
+> The assistant's prompts, web interface and subtitles are currently in **German**.
 
-| Was | Woher / Hinweis |
+- **Gemini Live API** with a native audio model: speech goes straight in and comes straight out (no STT/TTS)
+- **Local wake word** ([openWakeWord](https://github.com/dscripka/openWakeWord)) – nothing is sent to Gemini until the wake word is heard
+- **Smart home** via Home Assistant (MCP), with the current house status in the prompt
+- **Music & radio**: Spotify, YouTube Music, internet radio, now-playing widget
+- **On-device speaker recognition**: Gemini knows who is talking ("my appointments")
+- **Memory**, **scheduled jobs** (reminders, push notifications, events) and **Google Search**
+- **Launcher UI**: photo slideshow with face-aware camera pans, large clock, timers, microphone button
+- **Setup in the browser**, not on the device (it sits out in the open)
+
+## What you need
+
+| What | Where / notes |
 |---|---|
-| Gemini API-Key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Ein Gemini-Abo (AI Pro/Ultra) enthält **keinen** API-Zugang. Ohne Abrechnung läuft vieles im Freikontingent; die **Google-Suche** braucht eine aktivierte Abrechnung (5.000 Suchen/Monat frei, dann 14 $/1.000) – dann sind auch Gespräche kostenpflichtig. |
-| Hotword | Nichts: eingebaut sind „Alexa“ (Standard), „Hey Jarvis“, „Hey Mycroft“, „Hey Rhasspy“. Eigene openWakeWord-Modelle (`.onnx`) lassen sich hochladen, z.B. aus der [Home-Assistant-Wakeword-Sammlung](https://github.com/fwartner/home-assistant-wakewords-collection). |
-| Home Assistant (optional) | **HA-MCP**: Webhook-URL (`http://<ha>:8123/api/webhook/mcp_…`), kein Token. Oder **eingebauter MCP-Server**: Basis-URL plus Long-Lived Access Token. Hausstatus und Ereignis-Jobs brauchen HA-MCP (`ha_eval_template`). |
-| Spotify (optional) | **Premium** und eine eigene App im [Spotify-Dashboard](https://developer.spotify.com/dashboard) (seit Feb. 2026 nur mit Premium). Die Spotify-App muss auf dem Gerät installiert sein. |
-| YouTube Music (optional) | App auf dem Gerät, **Premium** für Wiedergabe im Hintergrund. |
+| Gemini API key | [aistudio.google.com/apikey](https://aistudio.google.com/apikey). A Gemini subscription (AI Pro/Ultra) does **not** include API access. Without billing, a lot works within the free tier; **Google Search** requires billing to be enabled (5,000 searches/month free, then $14/1,000) – at which point conversations are billed too. |
+| Wake word | Nothing: "Alexa" (default), "Hey Jarvis", "Hey Mycroft" and "Hey Rhasspy" are built in. Custom openWakeWord models (`.onnx`) can be uploaded, e.g. from the [Home Assistant wake word collection](https://github.com/fwartner/home-assistant-wakewords-collection). |
+| Home Assistant (optional) | **HA-MCP**: webhook URL (`http://<ha>:8123/api/webhook/mcp_…`), no token. Or the **built-in MCP server**: base URL plus a long-lived access token. House status and event jobs require HA-MCP (`ha_eval_template`). |
+| Spotify (optional) | **Premium** and your own app in the [Spotify dashboard](https://developer.spotify.com/dashboard) (Premium-only since Feb 2026). The Spotify app must be installed on the device. |
+| YouTube Music (optional) | App on the device, **Premium** for background playback. |
 
-## Bauen & installieren
+## Build & install
 
-Voraussetzungen: JDK 17+ und Android SDK (Platform 35); `local.properties` enthält `sdk.dir`.
+Requirements: JDK 17+ and the Android SDK (platform 35); `local.properties` contains `sdk.dir`.
 
 ```bash
 ./gradlew assembleDebug test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-# Rechte für Mediensteuerung und "zurück zur Uhr" nach dem Öffnen von Musik-Apps:
+# Permissions for media control and "back to the clock" after opening music apps:
 adb shell cmd notification allow_listener de.homevoice.assistant/de.homevoice.assistant.media.MediaListenerService
 adb shell appops set de.homevoice.assistant SYSTEM_ALERT_WINDOW allow
 ```
 
-Danach auf dem Gerät:
-1. App starten, Mikrofon erlauben, Home-Taste → **HomeVoice** als Standard-Launcher („Immer“).
-2. Das Display zeigt `Einrichtung im Browser: http://<IP>:8080 · PIN ……` (später: **lange tippen** zeigt Adresse und PIN erneut).
-3. Adresse am Computer öffnen, PIN eingeben, Gemini-Key eintragen – fertig. Alles Weitere ebenfalls dort.
+Then on the device:
+1. Start the app, allow the microphone, press Home → set **HomeVoice** as the default launcher ("Always").
+2. The display shows `Einrichtung im Browser: http://<IP>:8080 · PIN ……` (later: **long-press** shows address and PIN again).
+3. Open the address on your computer, enter the PIN, add your Gemini key – done. Everything else is configured there as well.
 
-Auf dem Gerät selbst gibt es bewusst **keine Einstellungen**.
+There are deliberately **no settings** on the device itself.
 
-## Bedienung
+## Usage
 
-- **Hotword** → Ton → sprechen. Gemini antwortet per Sprache und lässt sich unterbrechen (bei Halbduplex per Hotword).
-- Die Sitzung bleibt offen, solange jemand spricht (lokale Spracherkennung mit [Silero VAD](https://github.com/snakers4/silero-vad)), und endet **5 Sekunden** nach dem letzten Wort oder wenn Gemini sich verabschiedet („Danke, tschüss“). Geräusche halten sie nicht offen.
-- **Tippen**: Gespräch starten/beenden, klingelnden Timer stoppen.
-- **Mikrofon-Taste** oben rechts: Aufnahme komplett aus (rot, roter Balken unten); übersteht Neustarts.
-- **Lange tippen**: Adresse und PIN der Weboberfläche.
-- Statusleiste unten: weiß = verbindet, blau = hört zu, violett = spricht, rot = Fehler.
-- Untertitel zeigen Zahlen, Daten und Uhrzeiten als Ziffern („am 24. Oktober um 10:30 Uhr“).
+- **Wake word** → tone → speak. Gemini answers by voice and can be interrupted (in half-duplex mode via the wake word).
+- The session stays open as long as someone is speaking (local voice activity detection with [Silero VAD](https://github.com/snakers4/silero-vad)) and ends **5 seconds** after the last word or when Gemini says goodbye ("Danke, tschüss"). Background noise does not keep it open.
+- **Tap**: start/end a conversation, stop a ringing timer.
+- **Microphone button** top right: recording fully off (red, red bar at the bottom); survives reboots.
+- **Long-press**: address and PIN of the web interface.
+- Status bar at the bottom: white = connecting, blue = listening, purple = speaking, red = error.
+- Subtitles show numbers, dates and times as digits ("am 24. Oktober um 10:30 Uhr").
 
-## Funktionen
+## Features
 
-### Smart Home (Home Assistant)
-- Gemini bekommt nur **sichere HA-MCP-Tools** (Zustände, Schalten, Verlauf, Kalender, To-dos, Dienste auflisten). Admin-Tools (Neustart, Löschen, HACS, Backups …) nur per ausdrücklicher Freigabe.
-- **Hausstatus**: ein Jinja-Template (in der Weboberfläche bearbeitbar, mit Vorschau), das Home Assistant jede Minute rendert. Das Ergebnis – z.B. Lichter je Raum, Energie/PV, Auto, Wetter, Kalender – steht im System-Prompt; Gemini antwortet so ohne Abfrage und kennt die Entitäts-IDs zum Schalten. Die minütliche Abfrage geht nur an Home Assistant, nicht an Gemini.
+### Smart home (Home Assistant)
+- Gemini only gets **safe HA-MCP tools** (states, switching, history, calendars, to-dos, listing services). Admin tools (restart, delete, HACS, backups …) only when explicitly enabled.
+- **House status**: a Jinja template (editable in the web interface, with preview) that Home Assistant renders every minute. The result – e.g. lights per room, energy/PV, car, weather, calendar – goes into the system prompt, so Gemini can answer without a lookup and knows the entity IDs to switch. The per-minute query only goes to Home Assistant, not to Gemini.
 
-### Musik & Radio
-- **Spotify**: OAuth in der Weboberfläche (PKCE, Redirect `http://127.0.0.1:8080/spotify/callback` – die Seite lädt danach nicht, Adresse zurückkopieren). Suche über die Web API (Künstler, Titel, Alben, eigene Playlists, Lieblingssongs), Wiedergabe auf der Spotify-App des Geräts.
-- **YouTube Music**: Suche über die (inoffizielle) Such-Schnittstelle von music.youtube.com, Wiedergabe per Deep Link in der App.
-- **Radio** ohne zusätzliche App (Media3/ExoPlayer, MP3/AAC/HLS, Titelanzeige aus dem Stream). Eigene Senderliste in der Weboberfläche; unbekannte Sender sucht HomeVoice im Verzeichnis [radio-browser.info](https://www.radio-browser.info) und speichert sie.
-- Lautstärke in Prozent, 1–10 oder „lauter/leiser“; Pause, Weiter, „Was läuft gerade?“.
-- **Now-Playing-Widget** mit Cover und Tasten; beim Hotword wird Musik leiser gestellt.
+### Music & radio
+- **Spotify**: OAuth in the web interface (PKCE, redirect `http://127.0.0.1:8080/spotify/callback` – the page won't load afterwards, copy the address back). Search via the Web API (artists, tracks, albums, your playlists, liked songs), playback in the Spotify app on the device.
+- **YouTube Music**: search via the (unofficial) search endpoint of music.youtube.com, playback via deep link in the app.
+- **Radio** without an extra app (Media3/ExoPlayer, MP3/AAC/HLS, track info from the stream). Your own station list in the web interface; unknown stations are looked up in the [radio-browser.info](https://www.radio-browser.info) directory and saved.
+- Volume in percent, 1–10 or "louder/quieter"; pause, next, "What's playing?".
+- **Now-playing widget** with cover art and buttons; music is ducked when the wake word is heard.
 
-### Stimmerkennung
-- Pro Person 3–5 Sätze am Gerät einlernen (Weboberfläche → „Personen“); gespeichert wird nur ein Stimmabdruck ([CAM++ / 3D-Speaker](https://github.com/modelscope/3D-Speaker)), alles auf dem Gerät.
-- Erkennung schon am Hotword (vorläufig im System-Prompt), danach je Äußerung; Tool `who_is_speaking` für „Wer bin ich?“.
-- Jede Person kann einen **persönlichen Kalender** bekommen: „Was steht **für mich** an?“ fragt diesen, „Was steht heute an?“ alle Kalender.
-- Unsichere Fälle (ähnliche Stimmen) werden als „unbekannt“ gemeldet statt geraten. Kein Sicherheitsmerkmal.
+### Speaker recognition
+- Enroll each person with 3–5 sentences on the device (web interface → "Personen"); only a voiceprint is stored ([CAM++ / 3D-Speaker](https://github.com/modelscope/3D-Speaker)), all on the device.
+- Recognition starts at the wake word (provisionally in the system prompt), then per utterance; tool `who_is_speaking` for "Who am I?".
+- Each person can have a **personal calendar**: "What's on **for me**?" queries that one, "What's on today?" queries all calendars.
+- Uncertain cases (similar voices) are reported as "unknown" rather than guessed. Not a security feature.
 
-### Gedächtnis
-- „Merk dir …“ / „Vergiss …“; Einträge pro Person oder für den Haushalt. Alles Gemerkte steht im System-Prompt (neueste zuerst, ältere per Suche). Bearbeiten in der Weboberfläche.
+### Memory
+- "Remember …" / "Forget …"; entries per person or for the household. Everything remembered is in the system prompt (newest first, older ones via search). Editable in the web interface.
 
-### Geplante Jobs
-- „Erinnere mich morgen um 10 …“, „Schick mir werktags um 7 das Wetter aufs iPhone“, „Sag Bescheid, wenn die Spülmaschine fertig ist“.
-- Ein Job ist ein Prompt plus Auslöser (Uhrzeit einmalig/täglich/werktags/wöchentlich oder Ereignis als Jinja-Bedingung, minütlich lokal geprüft). Ausgeführt von HomeVoice mit Gemini Flash und allen Werkzeugen – Durchsage am Gerät oder Push-Nachricht über einen HA-`notify`-Dienst. Home Assistant liefert nur Werte, die Jobs verwaltet HomeVoice.
+### Scheduled jobs
+- "Remind me tomorrow at 10 …", "Send the weather to my iPhone every weekday at 7", "Tell me when the dishwasher is done".
+- A job is a prompt plus a trigger (time: once/daily/weekdays/weekly, or an event as a Jinja condition, checked locally every minute). Executed by HomeVoice with Gemini Flash and all tools – announcement on the device or push notification via an HA `notify` service. Home Assistant only supplies values; HomeVoice manages the jobs.
 
-### Google-Suche
-- Eingebautes *Grounding with Google Search* im Gespräch und in Jobs (Google sucht serverseitig). Abschaltbar.
+### Google Search
+- Built-in *Grounding with Google Search* in conversations and jobs (Google searches server-side). Can be turned off.
 
-### Diashow
-- Fotos über die Weboberfläche hochladen (auch HEIC); sie werden auf max. 2560 px verkleinert.
-- **Gesichtserkennung beim Upload** auf dem Gerät ([UltraFace](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB)): Die Ken-Burns-Fahrt hält alle bzw. die größten Gesichter im Bild, statt minutenlang Füße zu zeigen.
-- Galerie mit Vorschaubildern und Einzel-Löschen. Nachtmodus (gedimmte Uhr).
+### Slideshow
+- Upload photos through the web interface (HEIC too); they are scaled down to max. 2560 px.
+- **Face detection on upload** on the device ([UltraFace](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB)): the Ken Burns pan keeps all (or the largest) faces in frame instead of showing feet for minutes.
+- Gallery with thumbnails and individual deletion. Night mode (dimmed clock).
 
-### Timer
-- Stellen, abbrechen, auflisten, Alarm stoppen (Tippen oder Hotword); überstehen Neustarts.
+### Timers
+- Set, cancel, list, stop the alarm (tap or wake word); survive reboots.
 
-## Weboberfläche (Port 8080, PIN-geschützt)
+## Web interface (port 8080, PIN-protected)
 
-Gemini (Key, Modelle, Stimme, Prompt, Google-Suche, Mikrofon) · Jobs · Gedächtnis · Personen · Radio · Musik/Spotify ·
-Hotword (Modell, Schwelle mit Live-Score) · Home Assistant (URL, Token, Tool-Freigabe, Hausstatus-Template) · Diashow & Anzeige.
+Gemini (key, models, voice, prompt, Google Search, microphone) · Jobs · Memory · People · Radio · Music/Spotify ·
+Wake word (model, threshold with live score) · Home Assistant (URL, token, tool permissions, house status template) · Slideshow & display.
 
-## Audio-Hinweise
+## Audio notes
 
-- Das Echo Show 5 meldet **keine Echo-Unterdrückung (AEC)**. Darum ist dort **Halbduplex** Standard: Während Gemini spricht, ist das Mikrofon für Gemini stumm; unterbrechen geht per Hotword.
-- Hotword-Schwelle in der Weboberfläche einstellen (Live-Score: Wake Word sagen, Schwelle knapp unter die Spitze legen).
-- Im Leerlauf überspringt die Hotword-Erkennung bei Stille das teure Modell; die Diashow zeichnet mit 25 fps. Leerlauflast auf dem MT8163: grob 20–40 % eines Kerns je nach Geräuschkulisse.
+- The Echo Show 5 reports **no acoustic echo cancellation (AEC)**. That's why **half-duplex** is the default there: while Gemini speaks, the microphone is muted for Gemini; interrupt via the wake word.
+- Set the wake word threshold in the web interface (live score: say the wake word, put the threshold just below the peak).
+- When idle, wake word detection skips the expensive model during silence; the slideshow renders at 25 fps. Idle load on the MT8163: roughly 20–40 % of one core depending on ambient noise.
 
-## Daten & Datenschutz
+## Data & privacy
 
-| Bleibt auf dem Gerät | Geht an Google (Gemini) |
+| Stays on the device | Sent to Google (Gemini) |
 |---|---|
-| Hotword- und Spracherkennung, Stimmabdrücke, Gesichtserkennung, Fotos | Das Gespräch (Audio) ab dem Hotword |
-| Gedächtnis, Jobs, Senderliste, Einstellungen, Spotify-Tokens | System-Prompt: Hausstatus, Gedächtnis, Haushalt, Sendernamen |
-| Minütliche Hausstatus-/Ereignis-Abfragen (nur an Home Assistant) | Ausgeführte Jobs (Prompt + Tool-Ergebnisse) |
+| Wake word and voice activity detection, voiceprints, face detection, photos | The conversation (audio) from the wake word on |
+| Memory, jobs, station list, settings, Spotify tokens | System prompt: house status, memory, household, station names |
+| Per-minute house status/event queries (to Home Assistant only) | Executed jobs (prompt + tool results) |
 
-Keys liegen unverschlüsselt in den privaten App-Daten (für ein privates Gerät vertretbar).
+Keys are stored unencrypted in the app's private data (acceptable for a private device).
 
-## Architektur
+## Architecture
 
 ```
-MainActivity (Launcher, Compose)   AssistantService (Foreground)   SettingsWebServer (:8080)
+MainActivity (launcher, Compose)   AssistantService (foreground)   SettingsWebServer (:8080)
         │ StateFlows                        │                            │
         ▼                                   ▼                            ▼
-ConversationController ── AudioInput (16 kHz) ──┬─> WakeWordDetector (openWakeWord)   [Leerlauf]
-   │                                            ├─> SileroVad + SpeakerRecognizer     [Gespräch]
-   │                                            └─> GeminiLiveSession (WebSocket)     [Gespräch]
+ConversationController ── AudioInput (16 kHz) ──┬─> WakeWordDetector (openWakeWord)   [idle]
+   │                                            ├─> SileroVad + SpeakerRecognizer     [conversation]
+   │                                            └─> GeminiLiveSession (WebSocket)     [conversation]
    ├── AudioOutput (24 kHz)       ├── MediaSessions / MusicPlayer / RadioPlayer
-   └── ToolRegistry ── Timer, Musik, Radio, Gedächtnis, Jobs, Sprecher
+   └── ToolRegistry ── timers, music, radio, memory, jobs, speakers
                     └─ ha_* → HomeAssistantMcpClient (Streamable HTTP)
-TaskRunner ── GeminiTextClient (generateContent + Tool-Schleife) ── Systemwecker / Ereignis-Prüfung
+TaskRunner ── GeminiTextClient (generateContent + tool loop) ── system alarms / event checks
 ```
 
-| Pfad | Inhalt |
+| Path | Contents |
 |---|---|
-| `service/ConversationController.kt` | Sitzungen, Sitzungsende, Durchsagen, Stimmerkennung, System-Prompt |
-| `gemini/` | Live-Protokoll (WebSocket) und Text-Client für Jobs |
-| `mcp/` | MCP-Client (JSON/SSE, abbrechbar) und JSON-Schema → Gemini-Schema |
-| `media/`, `radio/` | Spotify, YouTube Music, Media-Sessions, Radio-Player und -Verzeichnis |
-| `speaker/`, `memory/`, `tasks/` | Personen/Stimmabdrücke, Gedächtnis, geplante Jobs |
-| `tools/` | Alle Gemini-Werkzeuge |
-| `slideshow/`, `ui/` | Fotos (Verkleinerung, Gesichter), Home-Screen, Widget |
-| `web/`, `assets/web/` | Weboberfläche (Server und Seite) |
-| `wakeword/` (Modul) | Reines Kotlin + ONNX: openWakeWord, Silero VAD, Fbank + Sprecher-Embedding, Gesichtserkennung, Kamerafahrt-Planung |
+| `service/ConversationController.kt` | Sessions, session end, announcements, speaker recognition, system prompt |
+| `gemini/` | Live protocol (WebSocket) and text client for jobs |
+| `mcp/` | MCP client (JSON/SSE, cancellable) and JSON Schema → Gemini schema |
+| `media/`, `radio/` | Spotify, YouTube Music, media sessions, radio player and directory |
+| `speaker/`, `memory/`, `tasks/` | People/voiceprints, memory, scheduled jobs |
+| `tools/` | All Gemini tools |
+| `slideshow/`, `ui/` | Photos (scaling, faces), home screen, widget |
+| `web/`, `assets/web/` | Web interface (server and page) |
+| `wakeword/` (module) | Pure Kotlin + ONNX: openWakeWord, Silero VAD, Fbank + speaker embedding, face detection, camera pan planning |
 
-Tests: `./gradlew test` (Unit-Tests; das Modul `wakeword` testet Hotword, VAD und Sprechererkennung mit `say`-Stimmen auf macOS
-und die Gesichtserkennung mit gemeinfreien Wikimedia-Fotos). Logs: `adb logcat -s VoiceAssistant`.
+Tests: `./gradlew test` (unit tests; the `wakeword` module tests wake word, VAD and speaker recognition with macOS `say` voices,
+and face detection with public-domain Wikimedia photos). Logs: `adb logcat -s VoiceAssistant`.
 
-## Bekannte Grenzen
+## Known limitations
 
-- Die Kamera des Echo Show wird von diesem LineageOS-Build nicht erkannt (kein Kamera-Feature).
-- Gemini-Sitzungen sind auf 10 Minuten begrenzt.
-- YouTube-Music-Suche und Radio-Browser sind inoffizielle bzw. Community-Dienste und können ausfallen.
-- Spotify nur über die Spotify-App (kein offizielles Wiedergabe-SDK ohne App).
+- The Echo Show's camera is not detected by this LineageOS build (no camera feature).
+- Gemini sessions are limited to 10 minutes.
+- YouTube Music search and Radio Browser are unofficial or community services and may go down.
+- Spotify only via the Spotify app (no official playback SDK without the app).
 
-## Lizenzen der eingebetteten Modelle
+## License
 
-openWakeWord-Modelle: CC BY-NC-SA 4.0 (nicht kommerziell) · Silero VAD: MIT · UltraFace: MIT · 3D-Speaker CAM++: Apache 2.0.
-Vor einer Veröffentlichung die Lizenzen beachten.
+The source code is licensed under the [MIT License](LICENSE). The bundled models in `app/src/main/assets/wakeword/` keep their own licenses:
+
+openWakeWord models: CC BY-NC-SA 4.0 (non-commercial) · Silero VAD: MIT · UltraFace: MIT · 3D-Speaker CAM++: Apache 2.0.
+Because of the openWakeWord models, the bundled wake word files – and builds containing them – may not be used commercially.
