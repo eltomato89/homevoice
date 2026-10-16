@@ -35,12 +35,55 @@ suspend fun loadHomeAssistantTools(client: HomeAssistantMcpClient, allowAll: Boo
             inputSchema = tool.inputSchema,
         )
         ToolHandler(declaration) { args ->
+            val message = if (tool.name == "ha_call_service") notificationText(args) else null
+            if (message != null && !NotificationGuard.firstSend(message)) {
+                return@ToolHandler buildJsonObject {
+                    put("error", "Diese Nachricht wurde gerade schon gesendet und wird nicht wiederholt. " +
+                        "Auch wenn der vorige Aufruf einen Fehler meldete, ist sie sehr wahrscheinlich angekommen.")
+                }
+            }
             val result = client.callTool(tool.name, args)
             buildJsonObject {
                 if (result.isError) put("error", result.text) else put("result", result.text)
             }
         }
     }
+
+/** The text of a push notification in an ha_call_service call, or null if it is not one. */
+internal fun notificationText(args: JsonObject): String? {
+    val domain = (args["domain"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+    val service = (args["service"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+    val entity = (args["entity_id"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+    if (domain != "notify" && !service.startsWith("notify") && !entity.startsWith("notify.")) return null
+    // data may arrive as an object or as a JSON string
+    val data = when (val d = args["data"]) {
+        is JsonObject -> d
+        is JsonPrimitive -> d.contentOrNull?.let { runCatching { Json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+        else -> null
+    }
+    return ((data?.get("message") ?: args["message"]) as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+/**
+ * Prevents sending the same notification twice: Home Assistant sometimes reports an error although
+ * the message was delivered (e.g. notify.notify with one unreachable device), and the model retries.
+ */
+internal object NotificationGuard {
+    private const val WINDOW_MS = 3 * 60_000L
+    private val sent = LinkedHashMap<String, Long>()
+
+    @Synchronized
+    fun firstSend(message: String, now: Long = System.currentTimeMillis()): Boolean {
+        sent.entries.removeAll { now - it.value > WINDOW_MS }
+        val key = message.lowercase().filter { it.isLetterOrDigit() }
+        if (key in sent) return false
+        sent[key] = now
+        return true
+    }
+
+    @Synchronized
+    fun clear() = sent.clear()
+}
 
 /** Renders a Jinja template in Home Assistant (needs the HA-MCP tool ha_eval_template). */
 suspend fun renderHomeAssistantTemplate(client: HomeAssistantMcpClient, template: String): String {

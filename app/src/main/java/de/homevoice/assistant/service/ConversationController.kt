@@ -811,6 +811,8 @@ class ConversationController(
         append("oder Fakten über den Haushalt (kurz bestätigen). Mit forget löschen, wenn etwas nicht mehr stimmt. ")
         append("Einträge mit Namen in Klammern gelten nur für diese Person.\n")
         append(memory.promptSection() ?: "(noch nichts gemerkt)")
+        append("\n\nPush-Nachrichten: genau EINMAL senden, über die im Hausstatus genannte Entität. Meldet der Aufruf einen ")
+        append("Fehler, nicht mit anderen Diensten erneut senden (sie kommt oft trotzdem an), sondern dem Nutzer den Fehler kurz sagen.")
         if (s.googleSearch) {
             append("\n\nFür aktuelle oder dir unbekannte Informationen (Nachrichten, Sportergebnisse, Öffnungszeiten, Preise, ")
             append("Veranstaltungen, Fakten nach deinem Wissensstand) nutze die Google-Suche, statt zu raten. ")
